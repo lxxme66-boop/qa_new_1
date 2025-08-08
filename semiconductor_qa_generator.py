@@ -129,6 +129,7 @@ class SemiconductorQAGenerator:
         # 检查是否使用vLLM HTTP模式
         self.use_vllm_http = os.environ.get('USE_VLLM_HTTP', 'false').lower() == 'true'
         self.vllm_server_url = os.environ.get('VLLM_SERVER_URL', 'http://localhost:8000/v1')
+        logger.info(f"DEBUG: USE_VLLM_HTTP={os.environ.get('USE_VLLM_HTTP')}, self.use_vllm_http={self.use_vllm_http}")
         
         # 加载模型配置
         self.config = MODEL_CONFIGS.get(self.model_name)
@@ -161,6 +162,7 @@ class SemiconductorQAGenerator:
     
     def setup_llm_and_tokenizer(self):
         """初始化vLLM和tokenizer"""
+        logger.info(f"DEBUG setup_llm_and_tokenizer: self.use_vllm_http={self.use_vllm_http}, USE_VLLM_HTTP={os.environ.get('USE_VLLM_HTTP')}")
             # 初始化 tokenizer
         if self.use_vllm_http:
             print("使用vLLM HTTP模式，跳过本地tokenizer初始化")
@@ -367,6 +369,7 @@ class SemiconductorQAGenerator:
     
     async def _generate_async(self, prompts, sampling_params=None, use_tqdm=False):
         """异步生成方法，支持vLLM HTTP模式"""
+        logger.debug(f"DEBUG _generate_async: self.llm={self.llm}, self.local_model_manager={self.local_model_manager}, self.use_vllm_http={self.use_vllm_http}")
         if self.llm == "vllm_http" and self.local_model_manager:
             # vLLM HTTP模式
             results = []
@@ -391,14 +394,23 @@ class SemiconductorQAGenerator:
                     })()
                     results.append(output)
             return results
-        else:
+        elif self.llm is not None:
             # 原有的vLLM模式 - 在异步上下文中调用同步方法
             import asyncio
             loop = asyncio.get_event_loop()
             return await loop.run_in_executor(None, self.llm.generate, prompts, sampling_params or self.sampling_params, use_tqdm)
+        else:
+            # self.llm 为 None，返回错误
+            logger.error("LLM未初始化，无法生成")
+            return [type('Output', (), {
+                'outputs': [type('GeneratedOutput', (), {
+                    'text': '【否】模型未初始化'
+                })()]
+            })() for _ in prompts]
     
     def _generate(self, prompts, sampling_params=None, use_tqdm=False):
         """统一的生成方法，支持vLLM和vLLM HTTP模式"""
+        logger.debug(f"DEBUG _generate: self.llm={self.llm}, self.local_model_manager={self.local_model_manager}, self.use_vllm_http={self.use_vllm_http}")
         if self.llm == "vllm_http" and self.local_model_manager:
             # vLLM HTTP模式 - 需要使用同步包装器
             import asyncio
@@ -447,9 +459,17 @@ class SemiconductorQAGenerator:
                         'text': '【否】生成过程中出现错误'
                     })()]
                 })() for _ in prompts]
-        else:
+        elif self.llm is not None:
             # 原有的vLLM模式
             return self.llm.generate(prompts, sampling_params or self.sampling_params, use_tqdm=use_tqdm)
+        else:
+            # self.llm 为 None，返回错误
+            logger.error("LLM未初始化，无法生成")
+            return [type('Output', (), {
+                'outputs': [type('GeneratedOutput', (), {
+                    'text': '【否】模型未初始化'
+                })()]
+            })() for _ in prompts]
     
     def _encode_length(self, text):
         """获取文本编码长度，处理tokenizer可能为None的情况"""

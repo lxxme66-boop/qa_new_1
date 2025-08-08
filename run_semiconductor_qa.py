@@ -432,6 +432,7 @@ async def run_complete_pipeline(
     os.makedirs(qa_results_dir, exist_ok=True)
     
     # 初始化QA生成器 - 修复参数传递问题
+    logger.info(f"DEBUG: 初始化前 USE_VLLM_HTTP={os.environ.get('USE_VLLM_HTTP')}")
     generator = SemiconductorQAGenerator(
         batch_size=batch_size,
         gpu_devices=gpu_devices
