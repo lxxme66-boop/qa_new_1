@@ -6,7 +6,7 @@ from volcenginesdkarkruntime import Ark, AsyncArk
 
 import os
 import re
-from Doubao.prompts_conf import system_prompt, user_prompts
+from TextGeneration.prompts_conf import system_prompt, user_prompts
 import asyncio
 import json
 from typing import List, Dict, Any
