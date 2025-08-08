@@ -595,6 +595,154 @@ class SemiconductorQAGenerator:
         logger.info(f"Text quality assessment completed: {total_stats}")
         return total_stats
 
+    async def judge_processed_texts(self, processed_texts: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+        """
+        评估已处理的文本数据质量，判断是否适合生成逻辑推理问题
+        
+        Args:
+            processed_texts: 已处理的文本列表，每个元素包含:
+                - paper_name: 文档名称
+                - md_content: Markdown格式的内容
+                - source_info: 原始信息
+                
+        Returns:
+            list: 评估结果列表，每个元素包含原始数据和判断结果
+        """
+        start_time = time.time()
+        logger.info(f"Starting text quality evaluation for {len(processed_texts)} texts")
+        
+        # 创建批次
+        batch_size = self.config.batch_size
+        batches = [processed_texts[i:i + batch_size] for i in range(0, len(processed_texts), batch_size)]
+        
+        all_results = []
+        total_passed = 0
+        total_failed = 0
+        
+        for batch_idx, batch in enumerate(tqdm(batches, desc="Evaluating text quality")):
+            score_inputs = []
+            batch_metadata = []
+            
+            # 准备批处理输入
+            for item in batch:
+                try:
+                    paper_content = item.get('md_content', '')
+                    
+                    if len(paper_content.strip()) < 100:
+                        logger.warning(f"Text {item.get('paper_name', 'unknown')} too short, marking as failed")
+                        all_results.append({
+                            **item,
+                            'judgment': {
+                                'suitable_for_qa': False,
+                                'reason': '文本内容过短',
+                                'score_text': '【否】文本内容过短，不足以生成有意义的问题'
+                            }
+                        })
+                        total_failed += 1
+                        continue
+                    
+                    # 构建评分提示
+                    score_prompt = self.score_template.replace("{academic_paper}", paper_content)
+                    score_messages = [
+                        {"role": "system", "content": "你是一个乐于助人的半导体显示技术领域的专家。"},
+                        {"role": "user", "content": score_prompt}
+                    ]
+                    
+                    # 应用聊天模板
+                    data_li = self.tokenizer.apply_chat_template(
+                        score_messages,
+                        tokenize=False,
+                        add_generation_prompt=True,
+                        truncation=True
+                    )
+                    
+                    # 检查长度并截断
+                    if len(self.tokenizer.encode(data_li)) > self.config.max_model_len - 1024:
+                        logger.warning(f"Prompt too long for {item.get('paper_name', 'unknown')}, truncating")
+                        # 截断内容
+                        max_content_len = self.config.max_model_len - 2048
+                        truncated_content = paper_content[:max_content_len]
+                        score_prompt = self.score_template.replace("{academic_paper}", truncated_content)
+                        score_messages = [
+                            {"role": "system", "content": "你是一个乐于助人的半导体显示技术领域的专家。"},
+                            {"role": "user", "content": score_prompt}
+                        ]
+                        data_li = self.tokenizer.apply_chat_template(
+                            score_messages,
+                            tokenize=False,
+                            add_generation_prompt=True,
+                            truncation=True
+                        )
+                    
+                    score_inputs.append(data_li)
+                    batch_metadata.append(item)
+                    
+                except Exception as e:
+                    logger.error(f"Error processing text {item.get('paper_name', 'unknown')}: {e}")
+                    all_results.append({
+                        **item,
+                        'judgment': {
+                            'suitable_for_qa': False,
+                            'reason': f'处理错误: {str(e)}',
+                            'score_text': f'【否】处理过程中出现错误: {str(e)}'
+                        }
+                    })
+                    total_failed += 1
+                    continue
+            
+            # 批量推理
+            if score_inputs:
+                try:
+                    score_outputs = self.llm.generate(
+                        score_inputs,
+                        self.sampling_params,
+                        use_tqdm=False
+                    )
+                    
+                    # 处理输出
+                    for output, metadata in zip(score_outputs, batch_metadata):
+                        score_text = output.outputs[0].text.strip()
+                        
+                        # 判断是否通过评估
+                        suitable = "【是】" in score_text or "是】" in score_text
+                        
+                        result = {
+                            **metadata,
+                            'judgment': {
+                                'suitable_for_qa': suitable,
+                                'reason': '通过质量评估' if suitable else '未通过质量评估',
+                                'score_text': score_text
+                            }
+                        }
+                        
+                        all_results.append(result)
+                        
+                        if suitable:
+                            total_passed += 1
+                        else:
+                            total_failed += 1
+                            
+                except Exception as e:
+                    logger.error(f"Error in batch inference: {e}")
+                    # 批量推理失败，将整批标记为失败
+                    for metadata in batch_metadata:
+                        all_results.append({
+                            **metadata,
+                            'judgment': {
+                                'suitable_for_qa': False,
+                                'reason': f'批量推理错误: {str(e)}',
+                                'score_text': f'【否】批量推理过程中出现错误: {str(e)}'
+                            }
+                        })
+                        total_failed += 1
+        
+        # 记录统计信息
+        processing_time = time.time() - start_time
+        logger.info(f"Text quality evaluation completed in {processing_time:.2f}s")
+        logger.info(f"Total: {len(processed_texts)}, Passed: {total_passed}, Failed: {total_failed}")
+        
+        return all_results
+
     def _save_intermediate_results(self, results: List[Dict], jsonl_path: str):
         """保存中间结果到JSONL文件"""
         os.makedirs(os.path.dirname(jsonl_path), exist_ok=True)

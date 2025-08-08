@@ -518,7 +518,7 @@ async def run_complete_pipeline(
         })
     
     # 执行文本质量评估
-    judged_results = await generator.judge_md_data(md_data_for_judgment)
+    judged_results = await generator.judge_processed_texts(md_data_for_judgment)
     
     # 保存质量评估结果
     judged_file = os.path.join(chunks_dir, "quality_judged_texts.json")
