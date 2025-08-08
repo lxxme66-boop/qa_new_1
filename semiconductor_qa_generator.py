@@ -161,7 +161,9 @@ class SemiconductorQAGenerator:
     
     def setup_llm_and_tokenizer(self):
         """初始化vLLM和tokenizer"""
-            # 初始化 tokenizer
+        logger.info(f"开始setup_llm_and_tokenizer, use_vllm_http={self.use_vllm_http}")
+        
+        # 初始化 tokenizer
         if self.use_vllm_http:
             print("使用vLLM HTTP模式，跳过本地tokenizer初始化")
             
@@ -196,7 +198,7 @@ class SemiconductorQAGenerator:
                     return self.vocab_size
             
             self.tokenizer = MockTokenizer()
-            return
+            # 不要在这里return，需要继续初始化LLM
         else:
             # 只有非HTTP模式才初始化本地tokenizer
             try:
@@ -209,7 +211,7 @@ class SemiconductorQAGenerator:
                 print(f"初始化tokenizer失败: {e}")
                 self.tokenizer = None
             
-        logger.info(f"初始化LLM模型: use_vllm_http={self.use_vllm_http}")
+        logger.info(f"初始化LLM模型: use_vllm_http={self.use_vllm_http}, LOCAL_MODEL_MANAGER_AVAILABLE={LOCAL_MODEL_MANAGER_AVAILABLE}")
         
         try:
             # 如果使用vLLM HTTP模式
@@ -329,7 +331,11 @@ class SemiconductorQAGenerator:
             logger.error(f"初始化LLM失败: {str(e)}")
             import traceback
             logger.error(f"堆栈跟踪:\n{traceback.format_exc()}")
-            raise RuntimeError(f"无法初始化LLM模型") from e
+            # 在HTTP模式下，即使初始化失败也不应该抛出异常
+            if not self.use_vllm_http:
+                raise RuntimeError(f"无法初始化LLM模型") from e
+            else:
+                logger.warning("HTTP模式下初始化失败，但将继续运行")
     
     # def _format_messages(self, messages, add_generation_prompt=True, truncation=True):
     #     """格式化消息，处理tokenizer可能为None的情况"""
@@ -393,6 +399,14 @@ class SemiconductorQAGenerator:
             return results
         else:
             # 原有的vLLM模式 - 在异步上下文中调用同步方法
+            if self.llm is None or isinstance(self.llm, str):
+                logger.error(f"LLM未正确初始化: self.llm={self.llm}")
+                # 返回错误结果
+                return [type('Output', (), {
+                    'outputs': [type('GeneratedOutput', (), {
+                        'text': '【否】LLM未正确初始化'
+                    })()]
+                })() for _ in prompts]
             import asyncio
             loop = asyncio.get_event_loop()
             return await loop.run_in_executor(None, self.llm.generate, prompts, sampling_params or self.sampling_params, use_tqdm)
@@ -449,6 +463,14 @@ class SemiconductorQAGenerator:
                 })() for _ in prompts]
         else:
             # 原有的vLLM模式
+            if self.llm is None or isinstance(self.llm, str):
+                logger.error(f"LLM未正确初始化: self.llm={self.llm}")
+                # 返回错误结果
+                return [type('Output', (), {
+                    'outputs': [type('GeneratedOutput', (), {
+                        'text': '【否】LLM未正确初始化'
+                    })()]
+                })() for _ in prompts]
             return self.llm.generate(prompts, sampling_params or self.sampling_params, use_tqdm=use_tqdm)
     
     def _encode_length(self, text):
