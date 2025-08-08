@@ -158,6 +158,27 @@ class LocalModelManager:
         if VLLM_HTTP_AVAILABLE:
             backends.append('vllm_http')
         return backends
+    
+    def is_available(self):
+        """
+        检查当前配置的后端是否可用
+        
+        Returns:
+            bool: 如果当前后端可用则返回True，否则返回False
+        """
+        try:
+            if self.backend == "vllm_http":
+                return VLLM_HTTP_AVAILABLE
+            elif self.backend == "vllm":
+                return VLLM_AVAILABLE
+            elif self.backend == "ollama":
+                # Ollama默认认为是可用的，因为它不需要额外依赖
+                return True
+            else:
+                return False
+        except Exception as e:
+            logger.error(f"Error checking backend availability: {e}")
+            return False
 
 
 def create_local_model_manager(config: Optional[Dict[str, Any]] = None) -> LocalModelManager:
