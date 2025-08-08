@@ -394,7 +394,7 @@ class SemiconductorQAGenerator:
                     })()
                     results.append(output)
             return results
-        elif self.llm is not None:
+        elif self.llm is not None and self.llm != "vllm_http":
             # 原有的vLLM模式 - 在异步上下文中调用同步方法
             import asyncio
             loop = asyncio.get_event_loop()
@@ -459,7 +459,7 @@ class SemiconductorQAGenerator:
                         'text': '【否】生成过程中出现错误'
                     })()]
                 })() for _ in prompts]
-        elif self.llm is not None:
+        elif self.llm is not None and self.llm != "vllm_http":
             # 原有的vLLM模式
             return self.llm.generate(prompts, sampling_params or self.sampling_params, use_tqdm=use_tqdm)
         else:
