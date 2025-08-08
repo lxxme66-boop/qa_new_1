@@ -122,6 +122,10 @@ class SemiconductorQAGenerator:
         self.tokenizer = None
         self.model = None
         self.device_map = self._setup_device_map()
+        
+        # 加载评估模板
+        self._load_templates()
+        
         logger.info(f"初始化QA生成器完成: batch_size={batch_size}, gpu_devices={gpu_devices}")
     
     def set_model_name(self, model_name: str):
