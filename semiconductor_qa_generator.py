@@ -8,6 +8,7 @@ import re
 import json
 import asyncio
 import numpy as np
+import torch
 from typing import List, Dict, Any, Optional, Tuple
 from dataclasses import dataclass
 from transformers import AutoTokenizer

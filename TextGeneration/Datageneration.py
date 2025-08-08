@@ -182,7 +182,10 @@ async def parse_txt(file_path: str, index: int, config: dict):
         content = f.read()
     
     # 文本分块处理 (使用配置中的分块大小)
-    chunk_size = config.get("processing", {}).get("chunk_size", 1000)
+    if config:
+        chunk_size = config.get("processing", {}).get("chunk_size", 1000)
+    else:
+        chunk_size = 1000  # 默认值
     chunks = [content[i:i+chunk_size] for i in range(0, len(content), chunk_size)]
     
     # 创建任务列表
@@ -332,11 +335,6 @@ async def input_text_process(text_content, source_file, chunk_index=0, total_chu
     # 添加分块标识
     logger.info(f"开始处理分块 {chunk_index+1}/{total_chunks} - 大小: {len(text_content)}字符")
     
-    # 在API请求前添加日志
-    logger.info(f"准备API请求: {formatted_prompt[:100]}...")
-    
-    # 在请求后添加日志
-    logger.info(f"收到响应: {content[:100]}...")
     if config:
         api_config = config.get('api', {})
         # 从配置获取 API 设置

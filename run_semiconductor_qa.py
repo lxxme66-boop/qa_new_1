@@ -384,9 +384,6 @@ import os
 from datetime import datetime
 # 原有的导入保持不变
 from semiconductor_qa_generator import SemiconductorQAGenerator  # 保持原有导入
-# 原有的导入保持不变
-from semiconductor_qa_generator import SemiconductorQAGenerator  # 保持原有导入
-from argument_data import ArgumentDataProcessor
 # ... 其他导入
 
 # =============================================================================
@@ -400,7 +397,8 @@ async def run_complete_pipeline(
     model_name: str = "qwq_32",
     batch_size: int = 2,
     gpu_devices: str = "0,1",
-    quality_threshold: float = 0.7  # 新增：问题质量阈值
+    quality_threshold: float = 0.7,  # 新增：问题质量阈值
+    enable_full_steps: bool = False  # 新增：是否启用完整步骤
 ):
     """运行完整的QA生成流程 - 优化版本
     
@@ -418,10 +416,11 @@ async def run_complete_pipeline(
     logger.info(f"质量阈值: {quality_threshold}")
     
     # 确保使用配置中的路径
-    if 'paths' in config and 'text_dir' in config['paths']:
-        input_dir = config['paths']['text_dir']
-    if 'paths' in config and 'output_dir' in config['paths']:
-        output_dir = config['paths']['output_dir']
+    if config:
+        if 'paths' in config and 'text_dir' in config['paths']:
+            input_dir = config['paths']['text_dir']
+        if 'paths' in config and 'output_dir' in config['paths']:
+            output_dir = config['paths']['output_dir']
     
     # 创建输出目录结构
     os.makedirs(output_dir, exist_ok=True)
@@ -997,6 +996,9 @@ def main():
     
     args = parser.parse_args()
     
+    # 初始化config变量
+    config = None
+    
     # 如果提供了配置文件，加载并应用配置
     if args.config:
         try:
@@ -1021,13 +1023,13 @@ def main():
     
     # 运行异步流程
     asyncio.run(run_complete_pipeline(
+        config=config,  # 第一个参数
         input_dir=args.input_dir,
         output_dir=args.output_dir,
         model_name=args.model,
         batch_size=args.batch_size,
         gpu_devices=args.gpu_devices,
         enable_full_steps=args.enable_full_steps
-        config=config  # ✅ 补上这一行
     ))
 
 

@@ -2,7 +2,13 @@ import base64
 import argparse
 import os
 # 通过 pip install volcengine-python-sdk[ark] 安装方舟SDK
-from volcenginesdkarkruntime import Ark, AsyncArk
+try:
+    from volcenginesdkarkruntime import Ark, AsyncArk
+    HAS_VOLC_SDK = True
+except ImportError:
+    HAS_VOLC_SDK = False
+    Ark = None
+    AsyncArk = None
 
 import os
 import re
