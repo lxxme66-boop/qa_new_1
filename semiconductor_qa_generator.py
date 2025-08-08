@@ -319,15 +319,15 @@ class SemiconductorQAGenerator:
                 formatted += "Assistant:"
             return formatted
     
-    def _generate(self, prompts, sampling_params=None, use_tqdm=False):
-        """统一的生成方法，支持vLLM和vLLM HTTP模式"""
+    async def _generate_async(self, prompts, sampling_params=None, use_tqdm=False):
+        """异步生成方法，支持vLLM HTTP模式"""
         if self.llm == "vllm_http" and self.local_model_manager:
             # vLLM HTTP模式
             results = []
             for prompt in prompts:
                 try:
                     # 使用LocalModelManager生成
-                    response = self.local_model_manager.generate(prompt)
+                    response = await self.local_model_manager.generate(prompt)
                     # 创建与vLLM兼容的输出格式
                     output = type('Output', (), {
                         'outputs': [type('GeneratedOutput', (), {
@@ -345,6 +345,62 @@ class SemiconductorQAGenerator:
                     })()
                     results.append(output)
             return results
+        else:
+            # 原有的vLLM模式 - 在异步上下文中调用同步方法
+            import asyncio
+            loop = asyncio.get_event_loop()
+            return await loop.run_in_executor(None, self.llm.generate, prompts, sampling_params or self.sampling_params, use_tqdm)
+    
+    def _generate(self, prompts, sampling_params=None, use_tqdm=False):
+        """统一的生成方法，支持vLLM和vLLM HTTP模式"""
+        if self.llm == "vllm_http" and self.local_model_manager:
+            # vLLM HTTP模式 - 需要使用同步包装器
+            import asyncio
+            
+            async def async_generate_batch():
+                results = []
+                for prompt in prompts:
+                    try:
+                        # 使用LocalModelManager生成
+                        response = await self.local_model_manager.generate(prompt)
+                        # 创建与vLLM兼容的输出格式
+                        output = type('Output', (), {
+                            'outputs': [type('GeneratedOutput', (), {
+                                'text': response
+                            })()]
+                        })()
+                        results.append(output)
+                    except Exception as e:
+                        logger.error(f"vLLM HTTP生成失败: {e}")
+                        # 创建错误输出
+                        output = type('Output', (), {
+                            'outputs': [type('GeneratedOutput', (), {
+                                'text': '【否】生成过程中出现错误'
+                            })()]
+                        })()
+                        results.append(output)
+                return results
+            
+            # 在同步上下文中运行异步函数
+            try:
+                loop = asyncio.get_event_loop()
+                if loop.is_running():
+                    # 如果已经在异步上下文中，创建任务
+                    import concurrent.futures
+                    with concurrent.futures.ThreadPoolExecutor() as executor:
+                        future = executor.submit(asyncio.run, async_generate_batch())
+                        return future.result()
+                else:
+                    # 如果不在异步上下文中，直接运行
+                    return asyncio.run(async_generate_batch())
+            except Exception as e:
+                logger.error(f"运行异步生成时出错: {e}")
+                # 返回错误结果
+                return [type('Output', (), {
+                    'outputs': [type('GeneratedOutput', (), {
+                        'text': '【否】生成过程中出现错误'
+                    })()]
+                })() for _ in prompts]
         else:
             # 原有的vLLM模式
             return self.llm.generate(prompts, sampling_params or self.sampling_params, use_tqdm=use_tqdm)
@@ -925,7 +981,7 @@ class SemiconductorQAGenerator:
             # 批量推理
             if score_inputs:
                 try:
-                    score_outputs = self._generate(score_inputs, use_tqdm=False)
+                    score_outputs = await self._generate_async(score_inputs, use_tqdm=False)
                     
                     # 处理输出
                     for output, metadata in zip(score_outputs, batch_metadata):
