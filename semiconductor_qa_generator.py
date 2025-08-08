@@ -118,16 +118,42 @@ class SemiconductorQAGenerator:
         self.gpu_devices = gpu_devices or "0"
         self.model_name = "qwq_32"  # 默认模型名称
         
+        # 加载模型配置
+        self.config = MODEL_CONFIGS.get(self.model_name)
+        if not self.config:
+            logger.warning(f"未找到模型 {self.model_name} 的配置，使用默认配置")
+            self.config = ModelConfig(
+                name=self.model_name,
+                path=self.model_name,
+                stop_tokens=[],
+                max_model_len=96 * 1024
+            )
+        
         # 原有的初始化代码保持不变
         self.tokenizer = None
         self.model = None
         self.device_map = self._setup_device_map()
+        
+        # 加载模板
+        self._load_templates()
+        
         logger.info(f"初始化QA生成器完成: batch_size={batch_size}, gpu_devices={gpu_devices}")
     
     def set_model_name(self, model_name: str):
         """设置模型名称 - 新增方法"""
         self.model_name = model_name
         logger.info(f"设置模型名称为: {model_name}")
+        
+        # 更新模型配置
+        self.config = MODEL_CONFIGS.get(self.model_name)
+        if not self.config:
+            logger.warning(f"未找到模型 {self.model_name} 的配置，使用默认配置")
+            self.config = ModelConfig(
+                name=self.model_name,
+                path=self.model_name,
+                stop_tokens=[],
+                max_model_len=96 * 1024
+            )
         
         # 如果模型已经加载，重新加载新模型
         if self.model:
