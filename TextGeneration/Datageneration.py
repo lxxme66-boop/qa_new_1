@@ -332,11 +332,6 @@ async def input_text_process(text_content, source_file, chunk_index=0, total_chu
     # 添加分块标识
     logger.info(f"开始处理分块 {chunk_index+1}/{total_chunks} - 大小: {len(text_content)}字符")
     
-    # 在API请求前添加日志
-    logger.info(f"准备API请求: {formatted_prompt[:100]}...")
-    
-    # 在请求后添加日志
-    logger.info(f"收到响应: {content[:100]}...")
     if config:
         api_config = config.get('api', {})
         # 从配置获取 API 设置
@@ -388,6 +383,9 @@ async def input_text_process(text_content, source_file, chunk_index=0, total_chu
         else:
             formatted_prompt = user_prompt
         
+        # 在API请求前添加日志
+        logger.info(f"准备API请求: {formatted_prompt[:100]}...")
+        
         # 记录使用的后端
         backend = "Local Model" if use_local and local_model_manager else "API"
         logger.info(f"📡 Using backend: {backend} for {source_file} chunk {chunk_index + 1}/{total_chunks}")
@@ -403,6 +401,7 @@ async def input_text_process(text_content, source_file, chunk_index=0, total_chu
                 max_tokens=config.get('models', {}).get('qa_generator_model', {}).get('max_tokens', 4096),
                 top_p=config.get('models', {}).get('qa_generator_model', {}).get('top_p', 0.9)
             )
+            logger.info(f"收到响应: {content[:100]}...")
         else:
             # 使用 API 后端
             logger.info(f"🔌 Connecting to: {api_base}")
@@ -438,6 +437,7 @@ async def input_text_process(text_content, source_file, chunk_index=0, total_chu
                 )
                 
                 content = response.choices[0].message.content
+                logger.info(f"收到响应: {content[:100]}...")
                 logger.info(f"✅ API request successful, response length: {len(content)} characters")
                 
             except Exception as api_error:
