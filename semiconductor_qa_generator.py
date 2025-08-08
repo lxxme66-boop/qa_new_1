@@ -164,7 +164,21 @@ class SemiconductorQAGenerator:
             # 初始化 tokenizer
         if self.use_vllm_http:
             print("使用vLLM HTTP模式，跳过本地tokenizer初始化")
-            self.tokenizer = None
+            # 创建一个假的tokenizer对象避免NoneType错误
+            class MockTokenizer:
+                def apply_chat_template(self, messages, tokenize=False, add_generation_prompt=True, truncation=True):
+                    # 手动格式化
+                    formatted = ""
+                    for msg in messages:
+                        role = msg['role']
+                        content = msg['content']
+                        formatted += f"<|im_start|>{role}\n{content}<|im_end|>\n"
+                    if add_generation_prompt:
+                        formatted += "<|im_start|>assistant\n"
+                    return formatted
+            
+            self.tokenizer = MockTokenizer()
+            return
         else:
             # 只有非HTTP模式才初始化本地tokenizer
             try:
@@ -299,25 +313,39 @@ class SemiconductorQAGenerator:
             logger.error(f"堆栈跟踪:\n{traceback.format_exc()}")
             raise RuntimeError(f"无法初始化LLM模型") from e
     
+    # def _format_messages(self, messages, add_generation_prompt=True, truncation=True):
+    #     """格式化消息，处理tokenizer可能为None的情况"""
+    #     if self.tokenizer is not None:
+    #         # return self.tokenizer.apply_chat_template(
+    #         #     messages,
+    #         #     tokenize=False,
+    #         #     add_generation_prompt=add_generation_prompt,
+    #         #     truncation=truncation
+    #         # )
+    #         prompt = self._format_messages(messages, add_generation_prompt=True)
+    #     else:
+    #         # Mock模式或tokenizer未初始化时，直接构建提示
+    #         formatted = ""
+    #         for msg in messages:
+    #             role = msg['role'].capitalize()
+    #             content = msg['content']
+    #             formatted += f"{role}: {content}\n\n"
+    #         if add_generation_prompt:
+    #             formatted += "Assistant:"
+    #         return formatted
     def _format_messages(self, messages, add_generation_prompt=True, truncation=True):
         """格式化消息，处理tokenizer可能为None的情况"""
-        if self.tokenizer is not None:
-            return self.tokenizer.apply_chat_template(
-                messages,
-                tokenize=False,
-                add_generation_prompt=add_generation_prompt,
-                truncation=truncation
-            )
-        else:
-            # Mock模式或tokenizer未初始化时，直接构建提示
-            formatted = ""
-            for msg in messages:
-                role = msg['role'].capitalize()
-                content = msg['content']
-                formatted += f"{role}: {content}\n\n"
-            if add_generation_prompt:
-                formatted += "Assistant:"
-            return formatted
+        # 直接使用Qwen格式，不依赖tokenizer
+        formatted = ""
+        for msg in messages:
+            role = msg['role']
+            content = msg['content']
+            formatted += f"<|im_start|>{role}\n{content}<|im_end|>\n"
+        
+        if add_generation_prompt:
+            formatted += "<|im_start|>assistant\n"
+        
+        return formatted
     
     async def _generate_async(self, prompts, sampling_params=None, use_tqdm=False):
         """异步生成方法，支持vLLM HTTP模式"""
