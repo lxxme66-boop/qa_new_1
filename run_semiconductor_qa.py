@@ -997,6 +997,9 @@ def main():
     
     args = parser.parse_args()
     
+    # 初始化配置
+    config = None
+    
     # 如果提供了配置文件，加载并应用配置
     if args.config:
         try:
@@ -1026,7 +1029,7 @@ def main():
         model_name=args.model,
         batch_size=args.batch_size,
         gpu_devices=args.gpu_devices,
-        enable_full_steps=args.enable_full_steps
+        enable_full_steps=args.enable_full_steps,
         config=config  # ✅ 补上这一行
     ))
 
