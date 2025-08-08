@@ -189,7 +189,7 @@ class SemiconductorQAGenerator:
                                 'temperature': 0.6,
                                 'repetition_penalty': 1.1,
                                 'max_tokens': 8192,
-                                'stop_token_ids': self.config.stop_tokens if self.config.stop_tokens else None
+                                'stop_token_ids': self.config.stop_tokens if self.config.stop_tokens and isinstance(self.config.stop_tokens[0], int) else None
                             }
                         }
                     }
@@ -215,11 +215,20 @@ class SemiconductorQAGenerator:
                         self.tokenizer = None
                 
                 # 设置sampling参数（虽然在HTTP模式下可能不直接使用）
+                # 处理stop_tokens，确保它们是字符串列表
+                stop_tokens = None
+                if self.config.stop_tokens:
+                    if isinstance(self.config.stop_tokens, list):
+                        # 过滤掉整数类型的token，只保留字符串
+                        stop_tokens = [str(token) for token in self.config.stop_tokens if isinstance(token, str)]
+                        if not stop_tokens:  # 如果过滤后为空，设为None
+                            stop_tokens = None
+                
                 self.sampling_params = SamplingParams(
                     temperature=0.6,
                     repetition_penalty=1.1,
                     max_tokens=8192,
-                    stop=self.config.stop_tokens if self.config.stop_tokens else None
+                    stop=stop_tokens
                 )
                 
                 logger.info("vLLM HTTP模式初始化成功")
@@ -245,11 +254,20 @@ class SemiconductorQAGenerator:
                     self.tokenizer = AutoTokenizer.from_pretrained(self.config.path, trust_remote_code=True)
                     
                     # 设置sampling参数
+                    # 处理stop_tokens，确保它们是字符串列表
+                    stop_tokens = None
+                    if self.config.stop_tokens:
+                        if isinstance(self.config.stop_tokens, list):
+                            # 过滤掉整数类型的token，只保留字符串
+                            stop_tokens = [str(token) for token in self.config.stop_tokens if isinstance(token, str)]
+                            if not stop_tokens:  # 如果过滤后为空，设为None
+                                stop_tokens = None
+                    
                     self.sampling_params = SamplingParams(
                         temperature=0.6,
                         repetition_penalty=1.1,
                         max_tokens=8192,
-                        stop=self.config.stop_tokens if self.config.stop_tokens else None
+                        stop=stop_tokens
                     )
                     
                     logger.info("vLLM和tokenizer初始化成功")
