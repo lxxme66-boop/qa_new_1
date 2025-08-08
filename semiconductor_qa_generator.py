@@ -161,9 +161,21 @@ class SemiconductorQAGenerator:
     
     def setup_llm_and_tokenizer(self):
         """初始化vLLM和tokenizer"""
-        if self.llm is not None:
-            logger.info("LLM已经初始化，跳过")
-            return
+            # 初始化 tokenizer
+        if self.use_vllm_http:
+            print("使用vLLM HTTP模式，跳过本地tokenizer初始化")
+            self.tokenizer = None
+        else:
+            # 只有非HTTP模式才初始化本地tokenizer
+            try:
+                model_path = self.config.get('models', {}).get('qa_generator_model', {}).get('path')
+                if model_path and os.path.exists(model_path):
+                    self.tokenizer = AutoTokenizer.from_pretrained(model_path)
+                else:
+                    self.tokenizer = None
+            except Exception as e:
+                print(f"初始化tokenizer失败: {e}")
+                self.tokenizer = None
             
         logger.info(f"初始化LLM模型: use_vllm_http={self.use_vllm_http}")
         
