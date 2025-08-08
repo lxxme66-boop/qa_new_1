@@ -32,6 +32,14 @@ try:
 except ImportError:
     logger.warning("vLLM not available, using mock implementation")
     VLLM_AVAILABLE = False
+
+# 导入vLLM HTTP客户端
+try:
+    from LocalModels.vllm_http_client import VLLMHTTPClient
+    VLLM_HTTP_AVAILABLE = True
+except ImportError:
+    logger.warning("vLLM HTTP client not available")
+    VLLM_HTTP_AVAILABLE = False
     
     class LLM:
         """Mock LLM class for when vLLM is not available"""
@@ -80,7 +88,7 @@ class ModelConfig:
 MODEL_CONFIGS = {
     "qwq_32": ModelConfig(
         name="qwq_32",
-        path="/mnt/workspace/models/Qwen/QwQ-32B/",
+        path="/mnt/data/MLLM/liuchi/trained_models/Qwen3-32B-dpo-5w_retrain",
         stop_tokens=[151329, 151336, 151338]
     ),
     "qw2_72": ModelConfig(
@@ -118,6 +126,10 @@ class SemiconductorQAGenerator:
         self.gpu_devices = gpu_devices or "0"
         self.model_name = "qwq_32"  # 默认模型名称
         
+        # 检查是否使用vLLM HTTP模式
+        self.use_vllm_http = os.environ.get('USE_VLLM_HTTP', 'false').lower() == 'true'
+        self.vllm_server_url = os.environ.get('VLLM_SERVER_URL', 'http://localhost:8000/v1')
+        
         # 加载模型配置
         self.config = MODEL_CONFIGS.get(self.model_name)
         if not self.config:
@@ -150,6 +162,11 @@ class SemiconductorQAGenerator:
         """初始化vLLM和tokenizer"""
         if self.llm is not None:
             logger.info("LLM已经初始化，跳过")
+            return
+            
+        if self.use_vllm_http:
+            logger.info(f"使用vLLM HTTP模式，服务器地址: {self.vllm_server_url}")
+            self._setup_vllm_http()
             return
             
         logger.info(f"初始化vLLM模型: {self.config.path}")
@@ -195,6 +212,68 @@ class SemiconductorQAGenerator:
             import traceback
             logger.error(f"堆栈跟踪:\n{traceback.format_exc()}")
             raise RuntimeError(f"无法初始化vLLM模型 {self.config.path}") from e
+    
+    def _setup_vllm_http(self):
+        """设置vLLM HTTP客户端"""
+        try:
+            if not VLLM_HTTP_AVAILABLE:
+                raise RuntimeError("vLLM HTTP客户端不可用")
+            
+            # 配置vLLM HTTP客户端
+            http_config = {
+                'base_url': self.vllm_server_url,
+                'api_key': 'dummy-key',
+                'model_name': 'qwen-vllm',
+                'temperature': self.config.temperature,
+                'max_tokens': self.config.max_tokens,
+                'top_p': self.config.top_p,
+                'top_k': self.config.top_k,
+                'repetition_penalty': self.config.repetition_penalty,
+                'stop_token_ids': self.config.stop_tokens,
+                'timeout': 300
+            }
+            
+            # 初始化HTTP客户端
+            self.vllm_http_client = VLLMHTTPClient(http_config)
+            self.llm = self.vllm_http_client  # 设置llm引用
+            
+            # 设置tokenizer（如果需要）
+            self.tokenizer = None  # HTTP模式下可能不需要本地tokenizer
+            
+            # 设置sampling参数（用于兼容性）
+            self.sampling_params = None
+            
+            logger.info("vLLM HTTP客户端初始化成功")
+            
+        except Exception as e:
+            logger.error(f"初始化vLLM HTTP客户端失败: {str(e)}")
+            raise RuntimeError(f"无法初始化vLLM HTTP客户端") from e
+    
+    def _generate_with_llm(self, prompts, sampling_params=None, use_tqdm=False):
+        """统一的LLM生成接口，支持vLLM和vLLM HTTP"""
+        if self.use_vllm_http:
+            # 使用vLLM HTTP客户端
+            results = []
+            for prompt in prompts:
+                try:
+                    response = self.vllm_http_client.generate(prompt)
+                    # 创建与vLLM输出格式兼容的对象
+                    class MockOutput:
+                        def __init__(self, text):
+                            self.text = text
+                    
+                    class MockResult:
+                        def __init__(self, text):
+                            self.outputs = [MockOutput(text)]
+                    
+                    results.append(MockResult(response))
+                except Exception as e:
+                    logger.error(f"vLLM HTTP生成失败: {str(e)}")
+                    results.append(MockResult(""))
+            return results
+        else:
+            # 使用本地vLLM
+            return self.llm.generate(prompts, sampling_params or self.sampling_params, use_tqdm=use_tqdm)
     
     def _format_messages(self, messages, add_generation_prompt=True, truncation=True):
         """格式化消息，处理tokenizer可能为None的情况"""
@@ -642,7 +721,7 @@ class SemiconductorQAGenerator:
                 
                 # 批量推理
                 try:
-                    score_outputs = self.llm.generate(score_inputs, self.sampling_params, use_tqdm=False)
+                    score_outputs = self._generate_with_llm(score_inputs, self.sampling_params, use_tqdm=False)
                     
                     # 处理输出
                     for idx, output in enumerate(score_outputs):
@@ -792,7 +871,7 @@ class SemiconductorQAGenerator:
             # 批量推理
             if score_inputs:
                 try:
-                    score_outputs = self.llm.generate(
+                    score_outputs = self._generate_with_llm(
                         score_inputs,
                         self.sampling_params,
                         use_tqdm=False
@@ -942,7 +1021,7 @@ class SemiconductorQAGenerator:
             
             # 批量生成
             try:
-                outputs = self.llm.generate(inputs, self.sampling_params, use_tqdm=False)
+                outputs = self._generate_with_llm(inputs, self.sampling_params, use_tqdm=False)
                 
                 # 处理输出
                 for idx, output in enumerate(outputs):
@@ -1144,7 +1223,7 @@ Context: {context}
             
             # 批量生成答案
             try:
-                outputs = self.llm.generate(inputs, self.sampling_params, use_tqdm=False)
+                outputs = self._generate_with_llm(inputs, self.sampling_params, use_tqdm=False)
                 
                 # 处理输出
                 for idx, output in enumerate(outputs):
@@ -1289,7 +1368,7 @@ Context: {context}
             
             # 批量评估
             try:
-                outputs = self.llm.generate(evaluator_inputs, self.sampling_params, use_tqdm=False)
+                outputs = self._generate_with_llm(evaluator_inputs, self.sampling_params, use_tqdm=False)
                 
                 # 处理输出
                 for idx, output in enumerate(outputs):
