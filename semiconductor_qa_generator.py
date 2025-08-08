@@ -137,7 +137,92 @@ class SemiconductorQAGenerator:
         # 加载模板
         self._load_templates()
         
+        # 初始化vLLM相关
+        self.llm = None
+        self.sampling_params = None
+        
+        # 自动初始化LLM
+        self.setup_llm_and_tokenizer()
+        
         logger.info(f"初始化QA生成器完成: batch_size={batch_size}, gpu_devices={gpu_devices}")
+    
+    def setup_llm_and_tokenizer(self):
+        """初始化vLLM和tokenizer"""
+        if self.llm is not None:
+            logger.info("LLM已经初始化，跳过")
+            return
+            
+        logger.info(f"初始化vLLM模型: {self.config.path}")
+        
+        try:
+            # 设置环境变量
+            os.environ["CUDA_VISIBLE_DEVICES"] = self.gpu_devices
+            
+            # 初始化vLLM
+            if VLLM_AVAILABLE:
+                self.llm = LLM(
+                    model=self.config.path,
+                    trust_remote_code=True,
+                    gpu_memory_utilization=0.95,
+                    tensor_parallel_size=len(self.gpu_devices.split(',')) if ',' in self.gpu_devices else 1,
+                    max_model_len=self.config.max_model_len
+                )
+                
+                # 初始化tokenizer
+                self.tokenizer = AutoTokenizer.from_pretrained(self.config.path, trust_remote_code=True)
+                
+                # 设置sampling参数
+                self.sampling_params = SamplingParams(
+                    temperature=0.6,
+                    repetition_penalty=1.1,
+                    max_tokens=8192,
+                    stop=self.config.stop_tokens if self.config.stop_tokens else None
+                )
+                
+                logger.info("vLLM和tokenizer初始化成功")
+            else:
+                logger.warning("vLLM不可用，使用模拟实现")
+                self.llm = LLM(model=self.config.path)
+                self.tokenizer = None  # Mock模式下不需要真实tokenizer
+                self.sampling_params = SamplingParams(
+                    temperature=0.6,
+                    repetition_penalty=1.1,
+                    max_tokens=8192
+                )
+                
+        except Exception as e:
+            logger.error(f"初始化vLLM失败: {str(e)}")
+            import traceback
+            logger.error(f"堆栈跟踪:\n{traceback.format_exc()}")
+            raise RuntimeError(f"无法初始化vLLM模型 {self.config.path}") from e
+    
+    def _format_messages(self, messages, add_generation_prompt=True, truncation=True):
+        """格式化消息，处理tokenizer可能为None的情况"""
+        if self.tokenizer is not None:
+            return self.tokenizer.apply_chat_template(
+                messages,
+                tokenize=False,
+                add_generation_prompt=add_generation_prompt,
+                truncation=truncation
+            )
+        else:
+            # Mock模式或tokenizer未初始化时，直接构建提示
+            formatted = ""
+            for msg in messages:
+                role = msg['role'].capitalize()
+                content = msg['content']
+                formatted += f"{role}: {content}\n\n"
+            if add_generation_prompt:
+                formatted += "Assistant:"
+            return formatted
+    
+    def _encode_length(self, text):
+        """获取文本编码长度，处理tokenizer可能为None的情况"""
+        if self.tokenizer is not None:
+            return len(self.tokenizer.encode(text))
+        else:
+            # 粗略估计：每个字符算1个token
+            return len(text)
     
     def set_model_name(self, model_name: str):
         """设置模型名称 - 新增方法"""
@@ -159,6 +244,14 @@ class SemiconductorQAGenerator:
         if self.model:
             logger.info("模型已加载，重新加载新模型...")
             self._load_model()
+            
+        # 重新初始化vLLM
+        if self.llm:
+            logger.info("重新初始化vLLM...")
+            self.llm = None
+            self.tokenizer = None
+            self.sampling_params = None
+            self.setup_llm_and_tokenizer()
     
     def load_model(self):
         """加载模型（公有方法）"""
@@ -517,15 +610,10 @@ class SemiconductorQAGenerator:
                         ]
                         
                         # 应用聊天模板
-                        data_li = self.tokenizer.apply_chat_template(
-                            score_messages,
-                            tokenize=False,
-                            add_generation_prompt=True,
-                            truncation=True
-                        )
+                        data_li = self._format_messages(score_messages)
                         
                         # 检查长度并截断
-                        if len(self.tokenizer.encode(data_li)) > self.config.max_model_len - 1024:
+                        if self._encode_length(data_li) > self.config.max_model_len - 1024:
                             logger.warning(f"Prompt too long for {paper}, truncating")
                             # 截断内容
                             max_content_len = self.config.max_model_len - 2048
@@ -535,12 +623,7 @@ class SemiconductorQAGenerator:
                                 {"role": "system", "content": "你是一个乐于助人的半导体显示技术领域的专家。"},
                                 {"role": "user", "content": score_prompt}
                             ]
-                            data_li = self.tokenizer.apply_chat_template(
-                                score_messages,
-                                tokenize=False,
-                                add_generation_prompt=True,
-                                truncation=True
-                            )
+                            data_li = self._format_messages(score_messages)
                         
                         score_inputs.append(data_li)
                         batch_metadata.append({
@@ -675,15 +758,10 @@ class SemiconductorQAGenerator:
                     ]
                     
                     # 应用聊天模板
-                    data_li = self.tokenizer.apply_chat_template(
-                        score_messages,
-                        tokenize=False,
-                        add_generation_prompt=True,
-                        truncation=True
-                    )
+                    data_li = self._format_messages(score_messages)
                     
                     # 检查长度并截断
-                    if len(self.tokenizer.encode(data_li)) > self.config.max_model_len - 1024:
+                    if self._encode_length(data_li) > self.config.max_model_len - 1024:
                         logger.warning(f"Prompt too long for {item.get('paper_name', 'unknown')}, truncating")
                         # 截断内容
                         max_content_len = self.config.max_model_len - 2048
@@ -693,12 +771,7 @@ class SemiconductorQAGenerator:
                             {"role": "system", "content": "你是一个乐于助人的半导体显示技术领域的专家。"},
                             {"role": "user", "content": score_prompt}
                         ]
-                        data_li = self.tokenizer.apply_chat_template(
-                            score_messages,
-                            tokenize=False,
-                            add_generation_prompt=True,
-                            truncation=True
-                        )
+                        data_li = self._format_messages(score_messages)
                     
                     score_inputs.append(data_li)
                     batch_metadata.append(item)
@@ -841,14 +914,10 @@ class SemiconductorQAGenerator:
                     ]
                     
                     # 应用聊天模板
-                    prompt = self.tokenizer.apply_chat_template(
-                        messages,
-                        tokenize=False,
-                        add_generation_prompt=True
-                    )
+                    prompt = self._format_messages(messages)
                     
                     # 检查长度
-                    if len(self.tokenizer.encode(prompt)) > self.config.max_model_len - 1024:
+                    if self._encode_length(prompt) > self.config.max_model_len - 1024:
                         logger.warning(f"Prompt too long for {paper_name}, truncating")
                         # 截断内容
                         max_content_len = self.config.max_model_len - 3000
@@ -858,11 +927,7 @@ class SemiconductorQAGenerator:
                             {"role": "system", "content": "你是一个乐于助人的半导体显示技术领域的专家。"},
                             {"role": "user", "content": generate_prompt}
                         ]
-                        prompt = self.tokenizer.apply_chat_template(
-                            messages,
-                            tokenize=False,
-                            add_generation_prompt=True
-                        )
+                        prompt = self._format_messages(messages)
                     
                     inputs.append(prompt)
                     batch_metadata.append(paper_data)
@@ -1048,14 +1113,10 @@ Context: {context}
                     ]
                     
                     # 应用聊天模板
-                    prompt = self.tokenizer.apply_chat_template(
-                        messages,
-                        tokenize=False,
-                        add_generation_prompt=True
-                    )
+                    prompt = self._format_messages(messages)
                     
                     # 检查长度
-                    if len(self.tokenizer.encode(prompt)) > self.config.max_model_len - 1024:
+                    if self._encode_length(prompt) > self.config.max_model_len - 1024:
                         logger.warning(f"Prompt too long, truncating context")
                         # 截断上下文
                         max_context_len = self.config.max_model_len - 3000
@@ -1068,11 +1129,7 @@ Context: {context}
                             {"role": "system", "content": "你是一个乐于助人的半导体显示技术领域的专家。"},
                             {"role": "user", "content": prompt_content}
                         ]
-                        prompt = self.tokenizer.apply_chat_template(
-                            messages,
-                            tokenize=False,
-                            add_generation_prompt=True
-                        )
+                        prompt = self._format_messages(messages)
                     
                     inputs.append(prompt)
                     batch_metadata.append(qa_item)
@@ -1217,11 +1274,7 @@ Context: {context}
                     ]
                     
                     # 应用聊天模板
-                    prompt = self.tokenizer.apply_chat_template(
-                        evaluator_messages,
-                        tokenize=False,
-                        add_generation_prompt=True
-                    )
+                    prompt = self._format_messages(evaluator_messages)
                     
                     evaluator_inputs.append(prompt)
                     batch_metadata.append(question_data)
