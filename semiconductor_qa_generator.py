@@ -391,11 +391,19 @@ class SemiconductorQAGenerator:
                     })()
                     results.append(output)
             return results
-        else:
+        elif self.llm and hasattr(self.llm, 'generate'):
             # 原有的vLLM模式 - 在异步上下文中调用同步方法
             import asyncio
             loop = asyncio.get_event_loop()
             return await loop.run_in_executor(None, self.llm.generate, prompts, sampling_params or self.sampling_params, use_tqdm)
+        else:
+            # 如果没有可用的生成方法，返回错误结果
+            logger.error(f"无法异步生成：llm={self.llm}, local_model_manager={self.local_model_manager}")
+            return [type('Output', (), {
+                'outputs': [type('GeneratedOutput', (), {
+                    'text': '【否】无可用的生成模型'
+                })()]
+            })() for _ in prompts]
     
     def _generate(self, prompts, sampling_params=None, use_tqdm=False):
         """统一的生成方法，支持vLLM和vLLM HTTP模式"""
@@ -447,9 +455,17 @@ class SemiconductorQAGenerator:
                         'text': '【否】生成过程中出现错误'
                     })()]
                 })() for _ in prompts]
-        else:
-            # 原有的vLLM模式
+        elif self.llm and hasattr(self.llm, 'generate'):
+            # 原有的vLLM模式 - 确保llm对象存在且有generate方法
             return self.llm.generate(prompts, sampling_params or self.sampling_params, use_tqdm=use_tqdm)
+        else:
+            # 如果没有可用的生成方法，返回错误结果
+            logger.error(f"无法生成：llm={self.llm}, local_model_manager={self.local_model_manager}")
+            return [type('Output', (), {
+                'outputs': [type('GeneratedOutput', (), {
+                    'text': '【否】无可用的生成模型'
+                })()]
+            })() for _ in prompts]
     
     def _encode_length(self, text):
         """获取文本编码长度，处理tokenizer可能为None的情况"""
