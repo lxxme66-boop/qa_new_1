@@ -550,9 +550,14 @@ async def run_complete_pipeline(
         # 准备QA生成的输入数据
         qa_input_data = []
         for text in qualified_texts:
+            # 组合结构化信息和原文内容
+            combined_content = text['content']
+            if 'text_content' in text and text['text_content']:
+                combined_content = f"{text['content']}\n\n=== 原文内容 ===\n{text['text_content']}"
+            
             qa_input_data.append({
                 "paper_name": f"{text['source_file']}_chunk_{text['chunk_index']}",
-                "md_content": text['content'],
+                "md_content": combined_content,
                 "source_info": text
             })
         
@@ -604,7 +609,14 @@ async def run_complete_pipeline(
         for qa_item in high_quality_qa:
             # 获取原始文本内容作为上下文
             source_info = qa_item.get('source_info', {})
-            context = source_info.get('content', qa_item.get('paper_content', ''))
+            # 组合结构化信息和原文作为上下文
+            structured_content = source_info.get('content', qa_item.get('paper_content', ''))
+            original_text = source_info.get('text_content', '')
+            
+            if original_text:
+                context = f"{structured_content}\n\n=== 原文内容 ===\n{original_text}"
+            else:
+                context = structured_content
             
             qa_item_with_context = qa_item.copy()
             qa_item_with_context['context'] = context
