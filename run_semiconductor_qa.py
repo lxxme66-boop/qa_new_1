@@ -518,7 +518,61 @@ async def run_complete_pipeline(
         })
     
     # 执行文本质量评估
-    judged_results = await generator.judge_md_data(md_data_for_judgment)
+    # Create temporary directory structure for judge_md_data method
+    temp_raw_folder = os.path.join(chunks_dir, "temp_judgment_input")
+    os.makedirs(temp_raw_folder, exist_ok=True)
+    
+    # Save processed data as temporary files for judgment
+    temp_files = []
+    for item in md_data_for_judgment:
+        temp_file = os.path.join(temp_raw_folder, f"{item['paper_name']}.txt")
+        with open(temp_file, 'w', encoding='utf-8') as f:
+            f.write(item['md_content'])
+        temp_files.append(temp_file)
+    
+    # Call judge_md_data with proper parameters
+    judged_file_path = os.path.join(chunks_dir, "quality_judged_texts.jsonl")
+    results_file_path = os.path.join(chunks_dir, "quality_judged_results.json")
+    judgment_stats = await generator.judge_md_data(
+        [temp_raw_folder], 
+        [results_file_path], 
+        judged_file_path
+    )
+    
+    # Clean up temporary files
+    import shutil
+    shutil.rmtree(temp_raw_folder, ignore_errors=True)
+    
+    # Read the actual judgment results from the saved file
+    judged_results = []
+    if os.path.exists(results_file_path):
+        try:
+            with open(results_file_path, 'r', encoding='utf-8') as f:
+                raw_results = json.load(f)
+            
+            # Transform results to expected format and match with source_info
+            for raw_result in raw_results:
+                # Find corresponding source_info by matching paper name
+                paper_id = raw_result['id']
+                source_info = None
+                for item in md_data_for_judgment:
+                    if item['paper_name'] == paper_id:
+                        source_info = item['source_info']
+                        break
+                
+                # Create judgment result in expected format
+                judged_item = {
+                    'id': paper_id,
+                    'judgment': {
+                        'suitable_for_qa': raw_result['stats'] == 1  # stats == 1 means passed
+                    },
+                    'score_text': raw_result.get('score_text', ''),
+                    'source_info': source_info
+                }
+                judged_results.append(judged_item)
+        except Exception as e:
+            logger.error(f"Error reading judgment results: {e}")
+            judged_results = []
     
     # 保存质量评估结果
     judged_file = os.path.join(chunks_dir, "quality_judged_texts.json")
@@ -529,7 +583,8 @@ async def run_complete_pipeline(
     qualified_texts = []
     for judged_item in judged_results:
         if judged_item.get('judgment', {}).get('suitable_for_qa', False):
-            qualified_texts.append(judged_item['source_info'])
+            if judged_item['source_info'] is not None:
+                qualified_texts.append(judged_item['source_info'])
     
     logger.info(f"文本质量评估完成: {len(processed_results)} -> {len(qualified_texts)} 通过评估")
     
