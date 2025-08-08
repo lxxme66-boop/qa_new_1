@@ -384,9 +384,6 @@ import os
 from datetime import datetime
 # 原有的导入保持不变
 from semiconductor_qa_generator import SemiconductorQAGenerator  # 保持原有导入
-# 原有的导入保持不变
-from semiconductor_qa_generator import SemiconductorQAGenerator  # 保持原有导入
-from argument_data import ArgumentDataProcessor
 # ... 其他导入
 
 # =============================================================================
@@ -1026,7 +1023,6 @@ def main():
         model_name=args.model,
         batch_size=args.batch_size,
         gpu_devices=args.gpu_devices,
-        enable_full_steps=args.enable_full_steps
         config=config  # ✅ 补上这一行
     ))
 
