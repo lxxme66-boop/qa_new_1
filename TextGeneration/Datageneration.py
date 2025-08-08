@@ -368,7 +368,19 @@ async def input_text_process(text_content, source_file, chunk_index=0, total_chu
                 local_model_manager = None
     
     try:
-        user_prompt = user_prompts[prompt_index]
+        # 支持字符串类型的prompt_index（用于text_prompts）
+        if isinstance(prompt_index, str):
+            # 从text_prompts或all_prompts中获取
+            from .prompts_conf import text_prompts, all_prompts
+            if prompt_index in text_prompts:
+                user_prompt = text_prompts[prompt_index]
+            elif prompt_index in all_prompts:
+                user_prompt = all_prompts[prompt_index]
+            else:
+                raise ValueError(f"未找到prompt: {prompt_index}")
+        else:
+            # 原有的数字索引逻辑
+            user_prompt = user_prompts[prompt_index]
         
         # Format the prompt with the text content
         if '{markdown_content}' in user_prompt:

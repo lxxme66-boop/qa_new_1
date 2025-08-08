@@ -766,6 +766,51 @@ text_prompts = {
 """
 }
 
+# 添加新的半导体文本QA生成prompt
+text_prompts["semiconductor_text_qa"] = """
+基于以下半导体显示技术相关文本，生成高质量的问答对。要求：
+
+1. 问题类型分布：
+   - 事实型问题（15%）：关于材料特性、工艺参数、性能指标等
+   - 比较型问题（15%）：比较不同材料、结构、工艺方案的优劣
+   - 推理型问题（50%）：解释机理原理、分析因果关系、探究现象本质
+   - 开放型问题（20%）：优化建议、改进方法、未来发展方向
+
+2. 答案要求：
+   - 准确性：基于文本内容，不臆造信息
+   - 完整性：包含必要的背景知识和推理过程
+   - 专业性：使用规范的半导体领域术语
+
+3. 质量标准：
+   - 问题应具有一定深度，适合专业技术人员
+   - 答案应包含详细的解释和科学依据
+   - 涵盖文本中的关键技术点
+
+文本内容：
+{text_content}
+
+请以JSON格式返回，包含以下字段：
+{
+  "qa_pairs": [
+    {
+      "question": "问题内容",
+      "answer": "答案内容",
+      "question_type": "factual/comparison/reasoning/open_ended",
+      "difficulty": "basic/intermediate/advanced",
+      "key_concepts": ["概念1", "概念2"],
+      "reasoning_steps": ["步骤1", "步骤2"]
+    }
+  ],
+  "technical_summary": {
+    "materials": ["材料列表"],
+    "processes": ["工艺流程"],
+    "parameters": {"参数名": "参数值"},
+    "applications": ["应用领域"]
+  },
+  "knowledge_points": ["知识点1", "知识点2"]
+}
+"""
+
 # 合并所有prompt
 all_prompts = {**user_prompts, **text_prompts}
 
