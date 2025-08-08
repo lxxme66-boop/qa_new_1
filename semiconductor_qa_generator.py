@@ -58,6 +58,14 @@ except ImportError:
             self.temperature = kwargs.get('temperature', 0.6)
             self.repetition_penalty = kwargs.get('repetition_penalty', 1.1)
 
+# 尝试导入LocalModelManager用于vLLM HTTP模式
+try:
+    from LocalModels.local_model_manager import LocalModelManager
+    LOCAL_MODEL_MANAGER_AVAILABLE = True
+except ImportError:
+    LOCAL_MODEL_MANAGER_AVAILABLE = False
+    logger.warning("LocalModelManager not available, vLLM HTTP mode will not work")
+
 
 @dataclass
 class ModelConfig:
@@ -118,6 +126,10 @@ class SemiconductorQAGenerator:
         self.gpu_devices = gpu_devices or "0"
         self.model_name = "qwq_32"  # 默认模型名称
         
+        # 检查是否使用vLLM HTTP模式
+        self.use_vllm_http = os.environ.get('USE_VLLM_HTTP', 'false').lower() == 'true'
+        self.vllm_server_url = os.environ.get('VLLM_SERVER_URL', 'http://localhost:8000/v1')
+        
         # 加载模型配置
         self.config = MODEL_CONFIGS.get(self.model_name)
         if not self.config:
@@ -140,11 +152,12 @@ class SemiconductorQAGenerator:
         # 初始化vLLM相关
         self.llm = None
         self.sampling_params = None
+        self.local_model_manager = None
         
         # 自动初始化LLM
         self.setup_llm_and_tokenizer()
         
-        logger.info(f"初始化QA生成器完成: batch_size={batch_size}, gpu_devices={gpu_devices}")
+        logger.info(f"初始化QA生成器完成: batch_size={batch_size}, gpu_devices={gpu_devices}, use_vllm_http={self.use_vllm_http}")
     
     def setup_llm_and_tokenizer(self):
         """初始化vLLM和tokenizer"""
@@ -152,26 +165,56 @@ class SemiconductorQAGenerator:
             logger.info("LLM已经初始化，跳过")
             return
             
-        logger.info(f"初始化vLLM模型: {self.config.path}")
+        logger.info(f"初始化LLM模型: use_vllm_http={self.use_vllm_http}")
         
         try:
-            # 设置环境变量
-            os.environ["CUDA_VISIBLE_DEVICES"] = self.gpu_devices
-            
-            # 初始化vLLM
-            if VLLM_AVAILABLE:
-                self.llm = LLM(
-                    model=self.config.path,
-                    trust_remote_code=True,
-                    gpu_memory_utilization=0.95,
-                    tensor_parallel_size=len(self.gpu_devices.split(',')) if ',' in self.gpu_devices else 1,
-                    max_model_len=self.config.max_model_len
-                )
+            # 如果使用vLLM HTTP模式
+            if self.use_vllm_http and LOCAL_MODEL_MANAGER_AVAILABLE:
+                logger.info("使用vLLM HTTP模式")
+                # 创建配置
+                config = {
+                    'api': {
+                        'use_local_models': True,
+                        'use_vllm_http': True,
+                        'vllm_server_url': self.vllm_server_url,
+                        'default_backend': 'vllm_http'
+                    },
+                    'models': {
+                        'local_models': {
+                            'default_backend': 'vllm_http',
+                            'vllm_http': {
+                                'base_url': self.vllm_server_url,
+                                'api_key': 'dummy-key',
+                                'model_name': 'qwen-vllm',
+                                'temperature': 0.6,
+                                'repetition_penalty': 1.1,
+                                'max_tokens': 8192,
+                                'stop_token_ids': self.config.stop_tokens if self.config.stop_tokens else None
+                            }
+                        }
+                    }
+                }
                 
-                # 初始化tokenizer
-                self.tokenizer = AutoTokenizer.from_pretrained(self.config.path, trust_remote_code=True)
+                # 初始化LocalModelManager
+                self.local_model_manager = LocalModelManager(config)
                 
-                # 设置sampling参数
+                # 设置为HTTP模式的标志
+                self.llm = "vllm_http"  # 使用字符串标记
+                
+                # 初始化tokenizer（如果有本地模型路径）
+                if os.path.exists(self.config.path):
+                    self.tokenizer = AutoTokenizer.from_pretrained(self.config.path, trust_remote_code=True)
+                else:
+                    # 使用默认的tokenizer
+                    logger.warning(f"模型路径 {self.config.path} 不存在，尝试使用Qwen tokenizer")
+                    try:
+                        # 尝试使用Qwen的tokenizer
+                        self.tokenizer = AutoTokenizer.from_pretrained("Qwen/Qwen-7B", trust_remote_code=True)
+                    except:
+                        logger.warning("无法加载Qwen tokenizer，使用模拟tokenizer")
+                        self.tokenizer = None
+                
+                # 设置sampling参数（虽然在HTTP模式下可能不直接使用）
                 self.sampling_params = SamplingParams(
                     temperature=0.6,
                     repetition_penalty=1.1,
@@ -179,22 +222,52 @@ class SemiconductorQAGenerator:
                     stop=self.config.stop_tokens if self.config.stop_tokens else None
                 )
                 
-                logger.info("vLLM和tokenizer初始化成功")
+                logger.info("vLLM HTTP模式初始化成功")
+                
             else:
-                logger.warning("vLLM不可用，使用模拟实现")
-                self.llm = LLM(model=self.config.path)
-                self.tokenizer = None  # Mock模式下不需要真实tokenizer
-                self.sampling_params = SamplingParams(
-                    temperature=0.6,
-                    repetition_penalty=1.1,
-                    max_tokens=8192
-                )
+                # 原有的vLLM初始化逻辑
+                logger.info(f"初始化vLLM模型: {self.config.path}")
+                
+                # 设置环境变量
+                os.environ["CUDA_VISIBLE_DEVICES"] = self.gpu_devices
+                
+                # 初始化vLLM
+                if VLLM_AVAILABLE:
+                    self.llm = LLM(
+                        model=self.config.path,
+                        trust_remote_code=True,
+                        gpu_memory_utilization=0.95,
+                        tensor_parallel_size=len(self.gpu_devices.split(',')) if ',' in self.gpu_devices else 1,
+                        max_model_len=self.config.max_model_len
+                    )
+                    
+                    # 初始化tokenizer
+                    self.tokenizer = AutoTokenizer.from_pretrained(self.config.path, trust_remote_code=True)
+                    
+                    # 设置sampling参数
+                    self.sampling_params = SamplingParams(
+                        temperature=0.6,
+                        repetition_penalty=1.1,
+                        max_tokens=8192,
+                        stop=self.config.stop_tokens if self.config.stop_tokens else None
+                    )
+                    
+                    logger.info("vLLM和tokenizer初始化成功")
+                else:
+                    logger.warning("vLLM不可用，使用模拟实现")
+                    self.llm = LLM(model=self.config.path)
+                    self.tokenizer = None  # Mock模式下不需要真实tokenizer
+                    self.sampling_params = SamplingParams(
+                        temperature=0.6,
+                        repetition_penalty=1.1,
+                        max_tokens=8192
+                    )
                 
         except Exception as e:
-            logger.error(f"初始化vLLM失败: {str(e)}")
+            logger.error(f"初始化LLM失败: {str(e)}")
             import traceback
             logger.error(f"堆栈跟踪:\n{traceback.format_exc()}")
-            raise RuntimeError(f"无法初始化vLLM模型 {self.config.path}") from e
+            raise RuntimeError(f"无法初始化LLM模型") from e
     
     def _format_messages(self, messages, add_generation_prompt=True, truncation=True):
         """格式化消息，处理tokenizer可能为None的情况"""
@@ -215,6 +288,36 @@ class SemiconductorQAGenerator:
             if add_generation_prompt:
                 formatted += "Assistant:"
             return formatted
+    
+    def _generate(self, prompts, sampling_params=None, use_tqdm=False):
+        """统一的生成方法，支持vLLM和vLLM HTTP模式"""
+        if self.llm == "vllm_http" and self.local_model_manager:
+            # vLLM HTTP模式
+            results = []
+            for prompt in prompts:
+                try:
+                    # 使用LocalModelManager生成
+                    response = self.local_model_manager.generate(prompt)
+                    # 创建与vLLM兼容的输出格式
+                    output = type('Output', (), {
+                        'outputs': [type('GeneratedOutput', (), {
+                            'text': response
+                        })()]
+                    })()
+                    results.append(output)
+                except Exception as e:
+                    logger.error(f"vLLM HTTP生成失败: {e}")
+                    # 创建错误输出
+                    output = type('Output', (), {
+                        'outputs': [type('GeneratedOutput', (), {
+                            'text': '【否】生成过程中出现错误'
+                        })()]
+                    })()
+                    results.append(output)
+            return results
+        else:
+            # 原有的vLLM模式
+            return self.llm.generate(prompts, sampling_params or self.sampling_params, use_tqdm=use_tqdm)
     
     def _encode_length(self, text):
         """获取文本编码长度，处理tokenizer可能为None的情况"""
@@ -642,7 +745,7 @@ class SemiconductorQAGenerator:
                 
                 # 批量推理
                 try:
-                    score_outputs = self.llm.generate(score_inputs, self.sampling_params, use_tqdm=False)
+                    score_outputs = self._generate(score_inputs, use_tqdm=False)
                     
                     # 处理输出
                     for idx, output in enumerate(score_outputs):
@@ -721,7 +824,7 @@ class SemiconductorQAGenerator:
         logger.info(f"Starting text quality evaluation for {len(processed_texts)} texts")
         
         # 创建批次
-        batch_size = self.config.batch_size
+        batch_size = self.batch_size
         batches = [processed_texts[i:i + batch_size] for i in range(0, len(processed_texts), batch_size)]
         
         all_results = []
@@ -792,11 +895,7 @@ class SemiconductorQAGenerator:
             # 批量推理
             if score_inputs:
                 try:
-                    score_outputs = self.llm.generate(
-                        score_inputs,
-                        self.sampling_params,
-                        use_tqdm=False
-                    )
+                    score_outputs = self._generate(score_inputs, use_tqdm=False)
                     
                     # 处理输出
                     for output, metadata in zip(score_outputs, batch_metadata):
@@ -942,7 +1041,7 @@ class SemiconductorQAGenerator:
             
             # 批量生成
             try:
-                outputs = self.llm.generate(inputs, self.sampling_params, use_tqdm=False)
+                outputs = self._generate(inputs, use_tqdm=False)
                 
                 # 处理输出
                 for idx, output in enumerate(outputs):
@@ -1144,7 +1243,7 @@ Context: {context}
             
             # 批量生成答案
             try:
-                outputs = self.llm.generate(inputs, self.sampling_params, use_tqdm=False)
+                outputs = self._generate(inputs, use_tqdm=False)
                 
                 # 处理输出
                 for idx, output in enumerate(outputs):
@@ -1289,7 +1388,7 @@ Context: {context}
             
             # 批量评估
             try:
-                outputs = self.llm.generate(evaluator_inputs, self.sampling_params, use_tqdm=False)
+                outputs = self._generate(evaluator_inputs, use_tqdm=False)
                 
                 # 处理输出
                 for idx, output in enumerate(outputs):
