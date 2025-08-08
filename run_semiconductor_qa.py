@@ -45,15 +45,25 @@ except ImportError:
     ARGUMENT_DATA_AVAILABLE = False
     logger.warning("数据增强模块不可用（缺少volcenginesdkarkruntime）")
     
-    # 创建一个mock类
-    class ArgumentDataProcessor:
-        """Mock ArgumentDataProcessor class"""
-        def __init__(self):
-            pass
-        
-        async def process_qa_data(self, *args, **kwargs):
-            logger.warning("数据增强功能不可用，跳过此步骤")
-            return args[0] if args else []
+    # 尝试使用简单的替代方案
+    try:
+        from simple_argument_data import SimpleArgumentDataProcessor as ArgumentDataProcessor
+        ARGUMENT_DATA_AVAILABLE = True
+        logger.info("使用简单数据增强模块作为替代")
+    except ImportError:
+        # 创建一个mock类
+        class ArgumentDataProcessor:
+            """Mock ArgumentDataProcessor class"""
+            def __init__(self):
+                pass
+            
+            async def process_qa_data(self, *args, **kwargs):
+                logger.warning("数据增强功能不可用，跳过此步骤")
+                return args[0] if args else []
+            
+            async def enhance_qa_data(self, *args, **kwargs):
+                logger.warning("数据增强功能不可用，跳过此步骤")
+                return args[0] if args else []
 
 # 导入新增的模块
 try:
