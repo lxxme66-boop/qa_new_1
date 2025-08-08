@@ -2,6 +2,7 @@
 本地模型管理器
 用于管理和选择不同的本地模型后端
 """
+import asyncio
 import logging
 from typing import Dict, Any, Optional, Union
 
@@ -73,20 +74,37 @@ class LocalModelManager:
         self.backend = config['models']['local_models']['default_backend']
         self.clients = {}
         
-    def get_client(self):
-        if self.backend == "vllm_http":
+    def get_client(self, backend: Optional[str] = None):
+        """
+        获取指定后端的客户端
+        
+        Args:
+            backend: 后端名称 ('vllm_http', 'vllm', 'ollama')，如果为None则使用默认后端
+            
+        Returns:
+            对应的客户端实例
+        """
+        if backend is None:
+            backend = self.backend
+            
+        if backend == "vllm_http":
             if "vllm_http" not in self.clients:
                 from .vllm_http_client import VLLMHTTPClient
                 vllm_config = self.config['models']['local_models']['vllm_http']
                 self.clients["vllm_http"] = VLLMHTTPClient(vllm_config)
             return self.clients["vllm_http"]
-        elif self.backend == "vllm":
+        elif backend == "vllm":
             if "vllm" not in self.clients:
                 from .vllm_client import VLLMClient
                 vllm_config = self.config['models']['local_models']['vllm']
                 self.clients["vllm"] = VLLMClient(vllm_config)
             return self.clients["vllm"]
-            
+        elif backend == "ollama":
+            if "ollama" not in self.clients:
+                from .ollama_client import OllamaClient
+                ollama_config = self.config['models']['local_models'].get('ollama', {})
+                self.clients["ollama"] = OllamaClient(ollama_config)
+            return self.clients["ollama"]
         else:
             raise ValueError(f"Unsupported backend: {backend}")
     
@@ -179,6 +197,15 @@ class LocalModelManager:
         except Exception as e:
             logger.error(f"Error checking backend availability: {e}")
             return False
+    
+    def get_backend_name(self):
+        """
+        获取当前使用的后端名称
+        
+        Returns:
+            str: 后端名称
+        """
+        return self.backend
 
 
 def create_local_model_manager(config: Optional[Dict[str, Any]] = None) -> LocalModelManager:
