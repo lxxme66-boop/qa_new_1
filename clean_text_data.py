@@ -8,6 +8,14 @@ import json
 pattern = re.compile(r"```json\s*(\{[\s\S]*?\})\s*```", re.DOTALL)
 
 
+def clean_data(input_file, output_dir):
+    """
+    Main entry point for data cleaning process.
+    This function is called by the main pipeline.
+    """
+    return clean_process(input_file, output_dir)
+
+
 def clean_process(input_file, output_file):
     with open(input_file, "rb") as f:
         data = pkl.load(f)
