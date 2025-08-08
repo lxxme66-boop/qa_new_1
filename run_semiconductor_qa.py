@@ -1021,13 +1021,13 @@ def main():
     
     # 运行异步流程
     asyncio.run(run_complete_pipeline(
+        config=config if args.config else {},  # 传入配置
         input_dir=args.input_dir,
         output_dir=args.output_dir,
         model_name=args.model,
         batch_size=args.batch_size,
         gpu_devices=args.gpu_devices,
         enable_full_steps=args.enable_full_steps
-        config=config  # ✅ 补上这一行
     ))
 
 
