@@ -164,8 +164,14 @@ class SemiconductorQAGenerator:
             # 初始化 tokenizer
         if self.use_vllm_http:
             print("使用vLLM HTTP模式，跳过本地tokenizer初始化")
-            # 创建一个假的tokenizer对象避免NoneType错误
+            
+            # 创建一个更完整的假tokenizer对象
             class MockTokenizer:
+                def __init__(self):
+                    self.vocab_size = 151936  # Qwen的词汇表大小
+                    self.pad_token_id = 151643
+                    self.eos_token_id = 151645
+                    
                 def apply_chat_template(self, messages, tokenize=False, add_generation_prompt=True, truncation=True):
                     # 手动格式化
                     formatted = ""
@@ -176,6 +182,18 @@ class SemiconductorQAGenerator:
                     if add_generation_prompt:
                         formatted += "<|im_start|>assistant\n"
                     return formatted
+                
+                def encode(self, text, add_special_tokens=True, max_length=None, truncation=True):
+                    # 简单的长度估算：中文字符约1个token，英文单词约0.75个token
+                    estimated_length = len(text.replace(' ', '')) * 1.2
+                    return list(range(int(estimated_length)))  # 返回假的token列表
+                
+                def decode(self, token_ids, skip_special_tokens=True):
+                    # 简单返回空字符串或占位符
+                    return f"decoded_text_{len(token_ids)}_tokens"
+                
+                def __len__(self):
+                    return self.vocab_size
             
             self.tokenizer = MockTokenizer()
             return
