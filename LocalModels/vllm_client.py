@@ -62,7 +62,7 @@ class VLLMClient:
                 - max_tokens: 最大生成令牌数
         """
         self.config = config
-        self.model_path = config.get('model_path', '/mnt/workspace/models/Qwen/QwQ-32B/')
+        self.model_path = config.get('model_path', 'Qwen/QwQ-32B-Preview')
         self.llm = None
         self.tokenizer = None
         self.sampling_params = None

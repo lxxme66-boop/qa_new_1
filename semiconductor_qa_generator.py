@@ -80,7 +80,7 @@ class ModelConfig:
 MODEL_CONFIGS = {
     "qwq_32": ModelConfig(
         name="qwq_32",
-        path="/mnt/workspace/models/Qwen/QwQ-32B/",
+        path="Qwen/QwQ-32B-Preview",
         stop_tokens=[151329, 151336, 151338]
     ),
     "qw2_72": ModelConfig(
