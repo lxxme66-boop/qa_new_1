@@ -163,9 +163,10 @@ class SemiconductorQAGenerator:
     def setup_llm_and_tokenizer(self):
         """初始化vLLM和tokenizer"""
         logger.info(f"DEBUG setup_llm_and_tokenizer: self.use_vllm_http={self.use_vllm_http}, USE_VLLM_HTTP={os.environ.get('USE_VLLM_HTTP')}")
-            # 初始化 tokenizer
+        
+        # 初始化 tokenizer
         if self.use_vllm_http:
-            print("使用vLLM HTTP模式，跳过本地tokenizer初始化")
+            print("使用vLLM HTTP模式，初始化Mock tokenizer")
             
             # 创建一个更完整的假tokenizer对象
             class MockTokenizer:
@@ -198,7 +199,7 @@ class SemiconductorQAGenerator:
                     return self.vocab_size
             
             self.tokenizer = MockTokenizer()
-            return
+            # 继续执行LLM初始化，不要return
         else:
             # 只有非HTTP模式才初始化本地tokenizer
             try:
@@ -247,18 +248,9 @@ class SemiconductorQAGenerator:
                 # 设置为HTTP模式的标志
                 self.llm = "vllm_http"  # 使用字符串标记
                 
-                # 初始化tokenizer（如果有本地模型路径）
-                if os.path.exists(self.config.path):
-                    self.tokenizer = AutoTokenizer.from_pretrained(self.config.path, trust_remote_code=True)
-                else:
-                    # 使用默认的tokenizer
-                    logger.warning(f"模型路径 {self.config.path} 不存在，尝试使用Qwen tokenizer")
-                    try:
-                        # 尝试使用Qwen的tokenizer
-                        self.tokenizer = AutoTokenizer.from_pretrained("Qwen/Qwen-7B", trust_remote_code=True)
-                    except:
-                        logger.warning("无法加载Qwen tokenizer，使用模拟tokenizer")
-                        self.tokenizer = None
+                # 在HTTP模式下，保持使用MockTokenizer，不要重新初始化
+                # 因为我们已经在上面创建了MockTokenizer
+                logger.info("HTTP模式下使用MockTokenizer，跳过本地tokenizer初始化")
                 
                 # 设置sampling参数（虽然在HTTP模式下可能不直接使用）
                 # 处理stop_tokens，确保它们是字符串列表
