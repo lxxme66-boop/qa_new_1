@@ -601,13 +601,14 @@ class SemiconductorQAGenerator:
             for item in results:
                 f.write(json.dumps(item, ensure_ascii=False) + "\n")
 
-    def generate_question_data(self, jsonl_file_input: str, jsonl_file_output: str) -> Dict[str, Any]:
+    def generate_question_data(self, jsonl_file_input: str, jsonl_file_output: str, add_prompt: str = "") -> Dict[str, Any]:
         """
         根据通过质量评估的文本生成问题
         
         Args:
             jsonl_file_input: 输入JSONL文件路径
             jsonl_file_output: 输出JSONL文件路径
+            add_prompt: 额外的提示信息，用于指定问题类型和示例
             
         Returns:
             dict: 生成结果统计
@@ -648,8 +649,17 @@ class SemiconductorQAGenerator:
                     paper_name = paper_data["paper_name"]
                     paper_content = paper_data["paper_content"]
                     
-                    # 构建生成提示
-                    generate_prompt = self.prompt_template.replace("{academic_paper}", paper_content)
+                    # 构建生成提示 - 如果有额外提示，则添加到模板中
+                    if add_prompt:
+                        # 在模板的要求部分后添加额外提示
+                        enhanced_template = self.prompt_template.replace(
+                            "### 输出格式要求：",
+                            f"{add_prompt}\n\n### 输出格式要求："
+                        )
+                        generate_prompt = enhanced_template.replace("{academic_paper}", paper_content)
+                    else:
+                        generate_prompt = self.prompt_template.replace("{academic_paper}", paper_content)
+                    
                     messages = [
                         {"role": "system", "content": "你是一个乐于助人的半导体显示技术领域的专家。"},
                         {"role": "user", "content": generate_prompt}
@@ -769,6 +779,207 @@ class SemiconductorQAGenerator:
                         questions.append(question)
         
         return questions
+
+    def generate_answers(self, qa_data_file: str, output_file: str, use_cot: bool = True) -> Dict[str, Any]:
+        """
+        为问题生成答案
+        
+        Args:
+            qa_data_file: 包含问题的JSON文件路径
+            output_file: 输出文件路径
+            use_cot: 是否使用Chain of Thought方式
+            
+        Returns:
+            dict: 生成结果统计
+        """
+        start_time = time.time()
+        stats = {
+            "total_processed": 0,
+            "successful_generations": 0,
+            "failed_generations": 0,
+            "no_answer_count": 0
+        }
+        
+        # 读取QA数据
+        qa_items = []
+        with open(qa_data_file, 'r', encoding='utf-8') as f:
+            data = json.load(f)
+            if isinstance(data, list):
+                qa_items = data
+            else:
+                logger.error("Invalid QA data format")
+                return stats
+        
+        logger.info(f"Found {len(qa_items)} QA items for answer generation")
+        stats["total_processed"] = len(qa_items)
+        
+        # 准备答案生成提示模板
+        if use_cot:
+            answer_template = """你是一名半导体显示领域的专家，你需要回答的问题是：{question}
+
+请注意：如果问题的难度超过你的能力，你无法确定回答准确性，请输出'无法作答!'。
+
+Context: {context}
+
+使用上述给定的上下文，回答问题。注意：
+- 首先，请提供有关如何回答问题的详细 reasoning。
+- 在 reasoning 中，如果需要复制上下文中的某些句子，请将其包含在 ##begin_quote## 和 ##end_quote## 中。这意味着 ##begin_quote## 和 ##end_quote## 之外的内容不是直接从上下文中复制的。
+- 结束你的回答，以 final answer 的形式 <ANSWER>: $answer，答案应该简洁。
+
+你必须以<Reasoning>: 开头，包含 reasoning 相关的内容；以 <ANSWER>: 开头，包含答案。"""
+        else:
+            answer_template = """{
+    "instruction":"你是一个半导体显示领域的资深专家，你掌握TFT、OLED、LCD、QLED、EE、Design等显示半导体显示领域内的相关知识。请根据输入中的切片信息和问题进行回答。切片信息是可能相关的资料，切片信息的内容庞杂，不一定会包含目标答案，请仔细阅读每个切片后再作答，不得出现错误。",
+    "input": {
+        "context": "{context}",
+        "question": "{question}"
+    },
+    "output": {
+        "answer": "根据切片中提供的有效信息对问题进行详尽的回答，推荐分点回答格式。"
+    },
+    "requirements": {
+        "criteria": "根据提供的切片信息提取有效信息进行回答",
+        "format": "输出内容必须用中文作答。",
+        "reasoning" : "在系统内部的think推理过程中，请将参考用到的上下文内容包含在 ##begin_quote## 和 ##end_quote## 中。"
+    }
+}"""
+        
+        # 批处理生成答案
+        batches = self.to_batch(qa_items, self.batch_size)
+        results = []
+        
+        for batch_idx, batch in enumerate(tqdm(batches, desc="Generating answers")):
+            inputs = []
+            batch_metadata = []
+            
+            for qa_item in batch:
+                try:
+                    question = qa_item.get("question", "")
+                    context = qa_item.get("context", qa_item.get("paper_content", ""))
+                    
+                    if not question or not context:
+                        logger.warning(f"Missing question or context for item: {qa_item.get('paper_name', 'unknown')}")
+                        continue
+                    
+                    # 构建答案生成提示
+                    prompt_content = answer_template.format(
+                        question=question,
+                        context=context
+                    )
+                    
+                    messages = [
+                        {"role": "system", "content": "你是一个乐于助人的半导体显示技术领域的专家。"},
+                        {"role": "user", "content": prompt_content}
+                    ]
+                    
+                    # 应用聊天模板
+                    prompt = self.tokenizer.apply_chat_template(
+                        messages,
+                        tokenize=False,
+                        add_generation_prompt=True
+                    )
+                    
+                    # 检查长度
+                    if len(self.tokenizer.encode(prompt)) > self.config.max_model_len - 1024:
+                        logger.warning(f"Prompt too long, truncating context")
+                        # 截断上下文
+                        max_context_len = self.config.max_model_len - 3000
+                        truncated_context = context[:max_context_len]
+                        prompt_content = answer_template.format(
+                            question=question,
+                            context=truncated_context
+                        )
+                        messages = [
+                            {"role": "system", "content": "你是一个乐于助人的半导体显示技术领域的专家。"},
+                            {"role": "user", "content": prompt_content}
+                        ]
+                        prompt = self.tokenizer.apply_chat_template(
+                            messages,
+                            tokenize=False,
+                            add_generation_prompt=True
+                        )
+                    
+                    inputs.append(prompt)
+                    batch_metadata.append(qa_item)
+                    
+                except Exception as e:
+                    logger.error(f"Error preparing input: {e}")
+                    stats["failed_generations"] += 1
+                    continue
+            
+            if not inputs:
+                continue
+            
+            # 批量生成答案
+            try:
+                outputs = self.llm.generate(inputs, self.sampling_params, use_tqdm=False)
+                
+                # 处理输出
+                for idx, output in enumerate(outputs):
+                    qa_item = batch_metadata[idx]
+                    answer_text = output.outputs[0].text
+                    
+                    # 解析答案
+                    if use_cot:
+                        # 提取COT格式的答案
+                        answer = self._parse_cot_answer(answer_text)
+                    else:
+                        # 直接使用生成的答案
+                        answer = answer_text.strip()
+                    
+                    # 检查是否无法作答
+                    if "无法作答" in answer:
+                        stats["no_answer_count"] += 1
+                    
+                    # 构建结果
+                    result = qa_item.copy()
+                    result["answer"] = answer
+                    result["answer_generation_time"] = datetime.now().isoformat()
+                    result["answer_model"] = self.model_name
+                    result["use_cot"] = use_cot
+                    
+                    results.append(result)
+                    stats["successful_generations"] += 1
+                    
+            except Exception as e:
+                logger.error(f"Error in batch answer generation: {e}")
+                stats["failed_generations"] += len(batch_metadata)
+        
+        # 保存结果
+        with open(output_file, 'w', encoding='utf-8') as f:
+            json.dump(results, f, ensure_ascii=False, indent=2)
+        
+        # 更新统计
+        stats["processing_time"] = time.time() - start_time
+        logger.info(f"Answer generation completed: {stats}")
+        
+        return stats
+    
+    def _parse_cot_answer(self, text: str) -> str:
+        """
+        解析COT格式的答案
+        
+        Args:
+            text: 生成的文本
+            
+        Returns:
+            str: 提取的答案
+        """
+        # 查找<ANSWER>:标记
+        answer_match = re.search(r'<ANSWER>:\s*(.+?)(?:\n|$)', text, re.DOTALL)
+        if answer_match:
+            return answer_match.group(1).strip()
+        
+        # 如果没有找到标准格式，尝试其他格式
+        # 查找最后一段作为答案
+        paragraphs = text.strip().split('\n\n')
+        if paragraphs:
+            last_paragraph = paragraphs[-1].strip()
+            if last_paragraph and not last_paragraph.startswith('<Reasoning>'):
+                return last_paragraph
+        
+        # 如果还是没有找到，返回整个文本
+        return text.strip()
 
     async def judge_question_data(self, jsonl_file_input: str, save_paths: List[str]) -> Dict[str, Any]:
         """

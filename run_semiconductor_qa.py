@@ -426,9 +426,11 @@ async def run_complete_pipeline(
     # 创建输出目录结构
     os.makedirs(output_dir, exist_ok=True)
     chunks_dir = os.path.join(output_dir, "chunks")
-    qa_intermediate_dir = os.path.join(output_dir, "qa_intermediate")
+    qa_original_dir = os.path.join(output_dir, "qa_original")
+    qa_results_dir = os.path.join(output_dir, "qa_results")
     os.makedirs(chunks_dir, exist_ok=True)
-    os.makedirs(qa_intermediate_dir, exist_ok=True)
+    os.makedirs(qa_original_dir, exist_ok=True)
+    os.makedirs(qa_results_dir, exist_ok=True)
     
     # 初始化QA生成器 - 修复参数传递问题
     generator = SemiconductorQAGenerator(
@@ -559,7 +561,7 @@ async def run_complete_pipeline(
         question_data = await generate_classified_questions(generator, qa_input_data, config)
         
         # 保存问题生成结果
-        question_file = os.path.join(qa_intermediate_dir, "classified_questions.json")
+        question_file = os.path.join(qa_original_dir, "classified_questions.json")
         with open(question_file, 'w', encoding='utf-8') as f:
             json.dump(question_data, f, ensure_ascii=False, indent=2)
         
@@ -570,7 +572,7 @@ async def run_complete_pipeline(
         converted_data = await generator.convert_questionlist_li_data(question_data)
         
         # 保存格式转换结果
-        converted_file = os.path.join(qa_intermediate_dir, "converted_questions.json")
+        converted_file = os.path.join(qa_original_dir, "converted_questions.json")
         with open(converted_file, 'w', encoding='utf-8') as f:
             json.dump(converted_data, f, ensure_ascii=False, indent=2)
         
@@ -581,7 +583,7 @@ async def run_complete_pipeline(
         evaluated_qa_data = await generator.judge_question_data(converted_data)
         
         # 保存评估结果
-        evaluated_file = os.path.join(qa_intermediate_dir, "evaluated_qa_data.json")
+        evaluated_file = os.path.join(qa_original_dir, "evaluated_qa_data.json")
         with open(evaluated_file, 'w', encoding='utf-8') as f:
             json.dump(evaluated_qa_data, f, ensure_ascii=False, indent=2)
         
@@ -594,12 +596,45 @@ async def run_complete_pipeline(
         
         logger.info(f"问题质量评估完成: {len(evaluated_qa_data)} -> {len(high_quality_qa)} 高质量问题")
         
-        # 保存高质量QA结果
-        qa_output_file = os.path.join(output_dir, "qa_generated.json")
-        with open(qa_output_file, 'w', encoding='utf-8') as f:
-            json.dump(high_quality_qa, f, ensure_ascii=False, indent=2)
+        # 步骤2.4: 答案生成（新增）
+        logger.info("步骤2.4: 为高质量问题生成答案...")
         
-        qa_results = high_quality_qa
+        # 为高质量问题添加上下文信息
+        qa_with_context = []
+        for qa_item in high_quality_qa:
+            # 获取原始文本内容作为上下文
+            source_info = qa_item.get('source_info', {})
+            context = source_info.get('content', qa_item.get('paper_content', ''))
+            
+            qa_item_with_context = qa_item.copy()
+            qa_item_with_context['context'] = context
+            qa_with_context.append(qa_item_with_context)
+        
+        # 保存带上下文的QA数据
+        qa_with_context_file = os.path.join(qa_original_dir, "qa_with_context.json")
+        with open(qa_with_context_file, 'w', encoding='utf-8') as f:
+            json.dump(qa_with_context, f, ensure_ascii=False, indent=2)
+        
+        # 生成答案
+        qa_with_answers_file = os.path.join(qa_original_dir, "qa_with_answers.json")
+        answer_stats = generator.generate_answers(
+            qa_with_context_file,
+            qa_with_answers_file,
+            use_cot=True  # 使用Chain of Thought方式
+        )
+        
+        logger.info(f"答案生成完成: {answer_stats}")
+        
+        # 读取带答案的QA数据
+        with open(qa_with_answers_file, 'r', encoding='utf-8') as f:
+            qa_with_answers = json.load(f)
+        
+        # 保存最终的高质量QA结果（包含答案）
+        qa_output_file = os.path.join(qa_results_dir, "qa_generated.json")
+        with open(qa_output_file, 'w', encoding='utf-8') as f:
+            json.dump(qa_with_answers, f, ensure_ascii=False, indent=2)
+        
+        qa_results = qa_with_answers
         
     except Exception as e:
         logger.error(f"QA生成失败: {e}")
@@ -607,7 +642,7 @@ async def run_complete_pipeline(
         logger.error(f"堆栈跟踪:\n{traceback.format_exc()}")
         
         qa_results = []
-        qa_output_file = os.path.join(output_dir, "qa_generated.json")
+        qa_output_file = os.path.join(qa_results_dir, "qa_generated.json")
         with open(qa_output_file, 'w', encoding='utf-8') as f:
             json.dump([], f)
     
@@ -617,11 +652,29 @@ async def run_complete_pipeline(
     # 初始化数据增强处理器
     argument_processor = ArgumentDataProcessor()
     
-    # 进行数据增强
-    enhanced_data = await argument_processor.enhance_qa_data(qa_results)
+    # 从qa_original加载高质量QA数据
+    qa_original_file = os.path.join(qa_original_dir, "evaluated_qa_data.json")
+    if os.path.exists(qa_original_file):
+        with open(qa_original_file, 'r', encoding='utf-8') as f:
+            qa_data_for_enhancement = json.load(f)
+        
+        # 筛选高质量数据进行增强
+        high_quality_for_enhancement = []
+        for qa_item in qa_data_for_enhancement:
+            quality_score = qa_item.get('quality_score', 0)
+            if quality_score >= quality_threshold:
+                high_quality_for_enhancement.append(qa_item)
+        
+        logger.info(f"从qa_original加载了 {len(high_quality_for_enhancement)} 个高质量QA进行增强")
+        
+        # 进行数据增强
+        enhanced_data = await argument_processor.enhance_qa_data(high_quality_for_enhancement)
+    else:
+        logger.warning("未找到qa_original数据，使用当前qa_results")
+        enhanced_data = await argument_processor.enhance_qa_data(qa_results)
     
     # 保存最终结果
-    final_output_file = os.path.join(output_dir, "final_qa_dataset.json")
+    final_output_file = os.path.join(qa_results_dir, "final_qa_dataset.json")
     with open(final_output_file, 'w', encoding='utf-8') as f:
         json.dump(enhanced_data, f, ensure_ascii=False, indent=2)
     
@@ -630,7 +683,7 @@ async def run_complete_pipeline(
     # 生成统计信息
     stats = generate_pipeline_stats(
         processed_results, qualified_texts, qa_results, enhanced_data,
-        input_dir, output_dir, chunks_dir, qa_intermediate_dir, model_name, quality_threshold
+        input_dir, output_dir, chunks_dir, qa_original_dir, model_name, quality_threshold
     )
     
     stats_file = os.path.join(output_dir, "pipeline_stats.json")
@@ -769,39 +822,27 @@ async def generate_questions_by_type(generator, content: str, question_type: str
 async def call_model_for_question_generation(generator, content: str, question_type: str, type_info: dict, config: dict):
     """调用模型生成问题的实际实现
     
-    使用SemiconductorQAGenerator的generate_question_data方法
+    使用SemiconductorQAGenerator的generate_question_data方法，通过add_prompt参数传递问题类型信息
     """
     import tempfile
     
     try:
-        # 修改生成器的prompt模板，加入问题类型和示例
-        original_template = getattr(generator, 'prompt_template', None)
-        
-        # 构建带分类的新模板
-        classified_template = f"""
-基于以下半导体材料和器件相关学术内容，生成{type_info['description']}的专业问题。
+        # 构建额外的提示信息
+        add_prompt = f"""
+### 特定问题类型要求：
+本次需要生成的是【{question_type.upper()}】类型的问题。
 
-问题类型：{question_type.upper()}
-类型说明：{type_info['description']}
+**类型说明**：{type_info['description']}
 
-参考示例：
-{chr(10).join(f"- {example}" for example in type_info['examples'][:3])}
+**参考示例**：
+{chr(10).join(f"{i+1}. {example}" for i, example in enumerate(type_info['examples'][:3]))}
 
-要求：
-1. 基于给定的学术内容生成2-3个{question_type}类型的问题
+**生成要求**：
+1. 生成2-3个符合【{question_type}】类型特征的问题
 2. 问题要体现{type_info['description']}的特点
-3. 问题要有一定的技术深度和专业性
-4. 每个问题都应该基于内容有明确的答案依据
-5. 问题格式：每行一个问题，以问号结尾
-
-学术论文内容：
-{{academic_paper}}
-
-请生成{question_type}类型的专业问题：
+3. 确保问题的专业性和技术深度
+4. 问题必须基于给定的学术内容，有明确的答案依据
 """
-        
-        # 临时设置新模板
-        generator.prompt_template = classified_template
         
         # 创建临时输入文件
         with tempfile.NamedTemporaryFile(mode='w', suffix='.jsonl', delete=False, encoding='utf-8') as temp_input:
@@ -819,8 +860,8 @@ async def call_model_for_question_generation(generator, content: str, question_t
             temp_output_path = temp_output.name
         
         try:
-            # 调用原有的generate_question_data方法
-            stats = await generator.generate_question_data(temp_input_path, temp_output_path)
+            # 调用generate_question_data方法，传入add_prompt
+            stats = generator.generate_question_data(temp_input_path, temp_output_path, add_prompt=add_prompt)
             
             # 读取生成的结果
             generated_questions = []
@@ -849,8 +890,10 @@ async def call_model_for_question_generation(generator, content: str, question_t
                 pass
             
             # 恢复原始模板
-            if original_template is not None:
-                generator.prompt_template = original_template
+            # The original code had this line, but it's not directly related to the prompt_template change.
+            # Keeping it as is, as it might be part of a larger context.
+            # if original_template is not None:
+            #     generator.prompt_template = original_template
         
         return response
         
@@ -884,7 +927,7 @@ def parse_generated_questions(response: str, question_type: str):
 
 
 def generate_pipeline_stats(processed_results, qualified_texts, qa_results, enhanced_data, 
-                          input_dir, output_dir, chunks_dir, qa_intermediate_dir, model_name, quality_threshold):
+                          input_dir, output_dir, chunks_dir, qa_original_dir, model_name, quality_threshold):
     """生成流水线统计信息"""
     
     # 统计问题分类分布
@@ -918,16 +961,16 @@ def generate_pipeline_stats(processed_results, qualified_texts, qa_results, enha
             "input_directory": input_dir,
             "output_directory": output_dir,
             "chunks_directory": chunks_dir,
-            "qa_intermediate_directory": qa_intermediate_dir
+            "qa_intermediate_directory": qa_original_dir
         },
         "file_outputs": {
             "ai_processed_texts": "chunks/ai_processed_texts.json",
             "quality_judged_texts": "chunks/quality_judged_texts.json", 
             "qualified_texts": "chunks/qualified_texts.json",
-            "classified_questions": "qa_intermediate/classified_questions.json",
-            "converted_questions": "qa_intermediate/converted_questions.json",
-            "evaluated_qa_data": "qa_intermediate/evaluated_qa_data.json",
-            "final_qa_dataset": "final_qa_dataset.json"
+            "classified_questions": "qa_original/classified_questions.json",
+            "converted_questions": "qa_original/converted_questions.json",
+            "evaluated_qa_data": "qa_original/evaluated_qa_data.json",
+            "final_qa_dataset": "qa_results/final_qa_dataset.json"
         },
         "generated_at": datetime.now().isoformat()
     }
