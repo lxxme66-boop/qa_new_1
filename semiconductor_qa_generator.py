@@ -277,6 +277,33 @@ class SemiconductorQAGenerator:
 [学术论文的结束]
 """
 
+        # 答案生成模板
+        self.answer_templates = {
+            "Qwen": """
+        Question: {question}\nContext: {context}\n
+        使用上述给定的上下文，回答问题。注意：
+        - 首先，请提供有关如何回答问题的详细 reasoning。
+        - 在 reasoning 中，如果需要复制上下文中的某些句子，请将其包含在 ##begin_quote## 和 ##end_quote## 中。 这意味着 ##begin_quote## 和 ##end_quote## 之外的内容不是直接从上下文中复制的。
+        - 结束你的回答，以 final answer 的形式 <ANSWER>: $answer，答案应该简洁。
+        你必须以<Reasoning>: 开头，包含 reasoning 相关的内容；以 <ANSWER>: 开头，包含答案。
+    """,
+            "qwen3": """{
+        "instruction":"你是一个半导体显示领域的资深专家，你掌握TFT、OLED、LCD、QLED、EE、Design等显示半导体显示领域内的相关知识。请根据输入中的切片信息和问题进行回答。切片信息是可能相关的资料，切片信息的内容庞杂，不一定会包含目标答案，请仔细阅读每个切片后再作答，不得出现错误。",
+        "input": {
+            "context": "{context}",
+            "question": "{question}"
+        },
+        "output": {
+            "answer": "根据切片中提供的有效信息对问题进行详尽的回答，推荐分点回答格式。"
+        },
+        "requirements": {
+            "criteria": "根据提供的切片信息提取有效信息进行回答",
+            "format": "输出内容必须用中文作答。",
+            "reasoning" : "在系统内部的think推理过程中，请将参考用到的上下文内容包含在 ##begin_quote## 和 ##end_quote## 中。 "
+        }
+    }"""
+        }
+
         # 问题质量评估模板
         self.evaluator_template = """您是一位专家评估员，负责决定问题是否符合推理问题标准。您的评估必须结合给定文章内容和给定问题判断。
 
@@ -780,14 +807,15 @@ class SemiconductorQAGenerator:
         
         return questions
 
-    def generate_answers(self, qa_data_file: str, output_file: str, use_cot: bool = True) -> Dict[str, Any]:
+    def generate_answers(self, qa_data_file: str, output_file: str, use_cot: bool = True, template_name: str = "Qwen") -> Dict[str, Any]:
         """
         为问题生成答案
         
         Args:
             qa_data_file: 包含问题的JSON文件路径
             output_file: 输出文件路径
-            use_cot: 是否使用Chain of Thought方式
+            use_cot: 是否使用Chain of Thought方式（已废弃，现在使用template_name）
+            template_name: 答案模板名称（"Qwen" 或 "qwen3"）
             
         Returns:
             dict: 生成结果统计
@@ -813,36 +841,13 @@ class SemiconductorQAGenerator:
         logger.info(f"Found {len(qa_items)} QA items for answer generation")
         stats["total_processed"] = len(qa_items)
         
-        # 准备答案生成提示模板
-        if use_cot:
-            answer_template = """你是一名半导体显示领域的专家，你需要回答的问题是：{question}
-
-请注意：如果问题的难度超过你的能力，你无法确定回答准确性，请输出'无法作答!'。
-
-Context: {context}
-
-使用上述给定的上下文，回答问题。注意：
-- 首先，请提供有关如何回答问题的详细 reasoning。
-- 在 reasoning 中，如果需要复制上下文中的某些句子，请将其包含在 ##begin_quote## 和 ##end_quote## 中。这意味着 ##begin_quote## 和 ##end_quote## 之外的内容不是直接从上下文中复制的。
-- 结束你的回答，以 final answer 的形式 <ANSWER>: $answer，答案应该简洁。
-
-你必须以<Reasoning>: 开头，包含 reasoning 相关的内容；以 <ANSWER>: 开头，包含答案。"""
+        # 使用预定义的答案模板
+        if template_name in self.answer_templates:
+            answer_template = self.answer_templates[template_name]
+            logger.info(f"使用答案模板: {template_name}")
         else:
-            answer_template = """{
-    "instruction":"你是一个半导体显示领域的资深专家，你掌握TFT、OLED、LCD、QLED、EE、Design等显示半导体显示领域内的相关知识。请根据输入中的切片信息和问题进行回答。切片信息是可能相关的资料，切片信息的内容庞杂，不一定会包含目标答案，请仔细阅读每个切片后再作答，不得出现错误。",
-    "input": {
-        "context": "{context}",
-        "question": "{question}"
-    },
-    "output": {
-        "answer": "根据切片中提供的有效信息对问题进行详尽的回答，推荐分点回答格式。"
-    },
-    "requirements": {
-        "criteria": "根据提供的切片信息提取有效信息进行回答",
-        "format": "输出内容必须用中文作答。",
-        "reasoning" : "在系统内部的think推理过程中，请将参考用到的上下文内容包含在 ##begin_quote## 和 ##end_quote## 中。"
-    }
-}"""
+            logger.warning(f"未找到模板 {template_name}，使用默认Qwen模板")
+            answer_template = self.answer_templates["Qwen"]
         
         # 批处理生成答案
         batches = self.to_batch(qa_items, self.batch_size)

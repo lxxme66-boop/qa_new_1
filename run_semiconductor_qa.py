@@ -423,14 +423,14 @@ async def run_complete_pipeline(
     if 'paths' in config and 'output_dir' in config['paths']:
         output_dir = config['paths']['output_dir']
     
-    # 创建输出目录结构
+    # 创建输出目录结构 - 更新为用户指定的路径名称
     os.makedirs(output_dir, exist_ok=True)
     chunks_dir = os.path.join(output_dir, "chunks")
-    qa_original_dir = os.path.join(output_dir, "qa_original")
-    qa_results_dir = os.path.join(output_dir, "qa_results")
+    qa_orige_dir = os.path.join(output_dir, "qa_orige") 
+    qa_res_dir = os.path.join(output_dir, "qa_res")
     os.makedirs(chunks_dir, exist_ok=True)
-    os.makedirs(qa_original_dir, exist_ok=True)
-    os.makedirs(qa_results_dir, exist_ok=True)
+    os.makedirs(qa_orige_dir, exist_ok=True)
+    os.makedirs(qa_res_dir, exist_ok=True)
     
     # 初始化QA生成器 - 修复参数传递问题
     generator = SemiconductorQAGenerator(
@@ -560,8 +560,8 @@ async def run_complete_pipeline(
         logger.info("步骤2.1: 执行分类问题生成...")
         question_data = await generate_classified_questions(generator, qa_input_data, config)
         
-        # 保存问题生成结果
-        question_file = os.path.join(qa_original_dir, "classified_questions.json")
+        # 保存问题生成结果到qa_orige目录
+        question_file = os.path.join(qa_orige_dir, "classified_questions.json")
         with open(question_file, 'w', encoding='utf-8') as f:
             json.dump(question_data, f, ensure_ascii=False, indent=2)
         
@@ -571,8 +571,8 @@ async def run_complete_pipeline(
         logger.info("步骤2.2: 执行问题格式转换...")
         converted_data = await generator.convert_questionlist_li_data(question_data)
         
-        # 保存格式转换结果
-        converted_file = os.path.join(qa_original_dir, "converted_questions.json")
+        # 保存格式转换结果到qa_orige目录
+        converted_file = os.path.join(qa_orige_dir, "converted_questions.json")
         with open(converted_file, 'w', encoding='utf-8') as f:
             json.dump(converted_data, f, ensure_ascii=False, indent=2)
         
@@ -582,8 +582,8 @@ async def run_complete_pipeline(
         logger.info("步骤2.3: 执行问题质量评估...")
         evaluated_qa_data = await generator.judge_question_data(converted_data)
         
-        # 保存评估结果
-        evaluated_file = os.path.join(qa_original_dir, "evaluated_qa_data.json")
+        # 保存评估结果到qa_orige目录
+        evaluated_file = os.path.join(qa_orige_dir, "evaluated_qa_data.json")
         with open(evaluated_file, 'w', encoding='utf-8') as f:
             json.dump(evaluated_qa_data, f, ensure_ascii=False, indent=2)
         
@@ -610,13 +610,13 @@ async def run_complete_pipeline(
             qa_item_with_context['context'] = context
             qa_with_context.append(qa_item_with_context)
         
-        # 保存带上下文的QA数据
-        qa_with_context_file = os.path.join(qa_original_dir, "qa_with_context.json")
+        # 保存带上下文的QA数据到qa_orige目录
+        qa_with_context_file = os.path.join(qa_orige_dir, "qa_with_context.json")
         with open(qa_with_context_file, 'w', encoding='utf-8') as f:
             json.dump(qa_with_context, f, ensure_ascii=False, indent=2)
         
-        # 生成答案
-        qa_with_answers_file = os.path.join(qa_original_dir, "qa_with_answers.json")
+        # 生成答案，保存到qa_orige目录
+        qa_with_answers_file = os.path.join(qa_orige_dir, "qa_with_answers.json")
         answer_stats = generator.generate_answers(
             qa_with_context_file,
             qa_with_answers_file,
@@ -629,8 +629,8 @@ async def run_complete_pipeline(
         with open(qa_with_answers_file, 'r', encoding='utf-8') as f:
             qa_with_answers = json.load(f)
         
-        # 保存最终的高质量QA结果（包含答案）
-        qa_output_file = os.path.join(qa_results_dir, "qa_generated.json")
+        # 保存最终的高质量QA结果（包含答案）到qa_res目录
+        qa_output_file = os.path.join(qa_res_dir, "qa_generated.json")
         with open(qa_output_file, 'w', encoding='utf-8') as f:
             json.dump(qa_with_answers, f, ensure_ascii=False, indent=2)
         
@@ -642,7 +642,7 @@ async def run_complete_pipeline(
         logger.error(f"堆栈跟踪:\n{traceback.format_exc()}")
         
         qa_results = []
-        qa_output_file = os.path.join(qa_results_dir, "qa_generated.json")
+        qa_output_file = os.path.join(qa_res_dir, "qa_generated.json")
         with open(qa_output_file, 'w', encoding='utf-8') as f:
             json.dump([], f)
     
@@ -652,10 +652,10 @@ async def run_complete_pipeline(
     # 初始化数据增强处理器
     argument_processor = ArgumentDataProcessor()
     
-    # 从qa_original加载高质量QA数据
-    qa_original_file = os.path.join(qa_original_dir, "evaluated_qa_data.json")
-    if os.path.exists(qa_original_file):
-        with open(qa_original_file, 'r', encoding='utf-8') as f:
+    # 从qa_orige加载高质量QA数据
+    qa_orige_file = os.path.join(qa_orige_dir, "evaluated_qa_data.json")
+    if os.path.exists(qa_orige_file):
+        with open(qa_orige_file, 'r', encoding='utf-8') as f:
             qa_data_for_enhancement = json.load(f)
         
         # 筛选高质量数据进行增强
@@ -665,16 +665,16 @@ async def run_complete_pipeline(
             if quality_score >= quality_threshold:
                 high_quality_for_enhancement.append(qa_item)
         
-        logger.info(f"从qa_original加载了 {len(high_quality_for_enhancement)} 个高质量QA进行增强")
+        logger.info(f"从qa_orige加载了 {len(high_quality_for_enhancement)} 个高质量QA进行增强")
         
         # 进行数据增强
         enhanced_data = await argument_processor.enhance_qa_data(high_quality_for_enhancement)
     else:
-        logger.warning("未找到qa_original数据，使用当前qa_results")
+        logger.warning("未找到qa_orige数据，使用当前qa_results")
         enhanced_data = await argument_processor.enhance_qa_data(qa_results)
     
-    # 保存最终结果
-    final_output_file = os.path.join(qa_results_dir, "final_qa_dataset.json")
+    # 保存最终结果到qa_res目录
+    final_output_file = os.path.join(qa_res_dir, "final_qa_dataset.json")
     with open(final_output_file, 'w', encoding='utf-8') as f:
         json.dump(enhanced_data, f, ensure_ascii=False, indent=2)
     
@@ -683,7 +683,7 @@ async def run_complete_pipeline(
     # 生成统计信息
     stats = generate_pipeline_stats(
         processed_results, qualified_texts, qa_results, enhanced_data,
-        input_dir, output_dir, chunks_dir, qa_original_dir, model_name, quality_threshold
+        input_dir, output_dir, chunks_dir, qa_orige_dir, model_name, quality_threshold
     )
     
     stats_file = os.path.join(output_dir, "pipeline_stats.json")
@@ -766,10 +766,16 @@ async def generate_classified_questions(generator, input_data: list, config: dic
                 "source_info": data_item.get("source_info", {})
             }
             
-            # 按比例生成不同类型的问题
+            # 按比例生成不同类型的问题 - 优化比例计算
+            total_questions = 10  # 增加总问题数以更好体现比例
+            
             for question_type, type_info in QUESTION_TYPES.items():
-                # 计算该类型应生成的问题数量（基于总问题数3个）
-                num_questions = max(1, int(3 * type_info["ratio"]))
+                # 计算该类型应生成的问题数量，确保每种类型至少生成1个问题
+                base_num = int(total_questions * type_info["ratio"])
+                num_questions = max(1, base_num)
+                
+                # 记录实际分配的问题数
+                logger.info(f"{question_type}类型问题: 比例{type_info['ratio']:.1%} -> 生成{num_questions}个")
                 
                 type_questions = await generate_questions_by_type(
                     generator, 
@@ -927,7 +933,7 @@ def parse_generated_questions(response: str, question_type: str):
 
 
 def generate_pipeline_stats(processed_results, qualified_texts, qa_results, enhanced_data, 
-                          input_dir, output_dir, chunks_dir, qa_original_dir, model_name, quality_threshold):
+                          input_dir, output_dir, chunks_dir, qa_orige_dir, model_name, quality_threshold):
     """生成流水线统计信息"""
     
     # 统计问题分类分布
@@ -982,7 +988,7 @@ def main():
     parser = argparse.ArgumentParser(description="半导体QA生成系统")
     parser.add_argument("--input-dir", type=str, default="data/texts",
                         help="输入文本文件目录")
-    parser.add_argument("--output-dir", type=str, default="data/qa_results",
+    parser.add_argument("--output-dir", type=str, default="output",
                         help="输出结果目录")
     parser.add_argument("--model", type=str, default="qwq_32",
                         help="使用的模型名称")
@@ -1026,8 +1032,8 @@ def main():
         model_name=args.model,
         batch_size=args.batch_size,
         gpu_devices=args.gpu_devices,
-        enable_full_steps=args.enable_full_steps
-        config=config  # ✅ 补上这一行
+        enable_full_steps=args.enable_full_steps,
+        config=config
     ))
 
 
