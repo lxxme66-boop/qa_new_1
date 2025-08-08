@@ -118,19 +118,35 @@ class SemiconductorQAGenerator:
         self.gpu_devices = gpu_devices or "0"
         self.model_name = "qwq_32"  # 默认模型名称
         
-        # 原有的初始化代码保持不变
+        # 初始化配置
+        self.config = MODEL_CONFIGS.get(self.model_name, MODEL_CONFIGS["qwq_32"])
+        
+        # 初始化模型相关属性
         self.tokenizer = None
         self.model = None
+        self.llm = None
+        self.sampling_params = None
+        
+        # 初始化设备映射
         self.device_map = self._setup_device_map()
+        
+        # 初始化统计信息
+        self.stats = {}
+        self.save_steps = 10  # 每10个批次保存一次
+        
+        # 加载模板
+        self._load_templates()
+        
         logger.info(f"初始化QA生成器完成: batch_size={batch_size}, gpu_devices={gpu_devices}")
     
     def set_model_name(self, model_name: str):
         """设置模型名称 - 新增方法"""
         self.model_name = model_name
+        self.config = MODEL_CONFIGS.get(model_name, MODEL_CONFIGS["qwq_32"])
         logger.info(f"设置模型名称为: {model_name}")
         
         # 如果模型已经加载，重新加载新模型
-        if self.model:
+        if self.llm or self.tokenizer:
             logger.info("模型已加载，重新加载新模型...")
             self._load_model()
     
@@ -146,14 +162,43 @@ class SemiconductorQAGenerator:
         logger.info(f"加载模型: {self.model_name}")
         
         try:
-            # 实际加载模型的代码
-            # 这里应该是加载tokenizer和模型的代码
-            self.tokenizer = AutoTokenizer.from_pretrained(self.model_name)
-            self.model = AutoModelForCausalLM.from_pretrained(
-                self.model_name,
-                device_map=self.device_map,
-                torch_dtype=torch.float16
+            # 获取模型配置
+            self.config = MODEL_CONFIGS.get(self.model_name, MODEL_CONFIGS["qwq_32"])
+            
+            # 加载tokenizer
+            self.tokenizer = AutoTokenizer.from_pretrained(
+                self.config.path,
+                trust_remote_code=True
             )
+            
+            # 初始化vLLM模型
+            if VLLM_AVAILABLE:
+                self.llm = LLM(
+                    model=self.config.path,
+                    max_model_len=self.config.max_model_len,
+                    gpu_memory_utilization=self.config.gpu_memory_utilization,
+                    tensor_parallel_size=self.config.tensor_parallel_size,
+                    trust_remote_code=True
+                )
+                
+                # 初始化采样参数
+                self.sampling_params = SamplingParams(
+                    temperature=self.config.temperature,
+                    repetition_penalty=self.config.repetition_penalty,
+                    min_p=self.config.min_p,
+                    top_p=self.config.top_p,
+                    top_k=self.config.top_k,
+                    max_tokens=self.config.max_tokens,
+                    stop_token_ids=self.config.stop_tokens
+                )
+            else:
+                # 使用模拟实现
+                self.llm = LLM(model=self.config.path)
+                self.sampling_params = SamplingParams(
+                    temperature=self.config.temperature,
+                    repetition_penalty=self.config.repetition_penalty
+                )
+            
             logger.info(f"成功加载模型: {self.model_name}")
         except Exception as e:
             logger.error(f"加载模型失败: {str(e)}")
@@ -425,6 +470,12 @@ class SemiconductorQAGenerator:
             dict: 评估结果统计
         """
         start_time = time.time()
+        
+        # 确保模型已加载
+        if self.tokenizer is None or self.llm is None:
+            logger.info("Model not loaded, loading now...")
+            self.load_model()
+        
         total_stats = {
             "total_files": 0,
             "passed_files": 0,
@@ -610,6 +661,11 @@ class SemiconductorQAGenerator:
         """
         start_time = time.time()
         logger.info(f"Starting text quality evaluation for {len(processed_texts)} texts")
+        
+        # 确保模型已加载
+        if self.tokenizer is None or self.llm is None:
+            logger.info("Model not loaded, loading now...")
+            self.load_model()
         
         # 创建批次
         batch_size = self.config.batch_size
