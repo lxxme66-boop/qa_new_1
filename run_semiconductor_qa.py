@@ -825,10 +825,16 @@ async def call_model_for_question_generation(generator, content: str, question_t
     使用SemiconductorQAGenerator的generate_question_data方法，通过add_prompt参数传递问题类型信息
     """
     import tempfile
+    from TextGeneration.prompts_conf import get_prompt
     
     try:
-        # 构建额外的提示信息
-        add_prompt = f"""
+        # 使用新的分类问题生成prompt
+        prompt_template = get_prompt("text_qa_classified")
+        if not prompt_template:
+            # 如果获取失败，使用原有方式
+            logger.warning("未找到text_qa_classified模板，使用原有方式")
+            # 构建额外的提示信息
+            add_prompt = f"""
 ### 特定问题类型要求：
 本次需要生成的是【{question_type.upper()}】类型的问题。
 
@@ -843,6 +849,17 @@ async def call_model_for_question_generation(generator, content: str, question_t
 3. 确保问题的专业性和技术深度
 4. 问题必须基于给定的学术内容，有明确的答案依据
 """
+        else:
+            # 使用新的prompt模板
+            examples_text = chr(10).join(f"{i+1}. {example}" for i, example in enumerate(type_info['examples'][:3]))
+            add_prompt = prompt_template.format(
+                text_content=content,
+                question_type=question_type.upper(),
+                type_description=type_info['description'],
+                examples=examples_text
+            )
+            # 由于新模板已包含完整内容，不需要再传递content
+            content = ""  # 避免重复
         
         # 创建临时输入文件
         with tempfile.NamedTemporaryFile(mode='w', suffix='.jsonl', delete=False, encoding='utf-8') as temp_input:
